@@ -344,16 +344,19 @@ const handleNavigate = (type) => {
 <style scoped lang="scss">
 .home-container {
   min-height: 100vh;
-  background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+  background:
+    radial-gradient(circle at 8% 8%, rgba(99, 102, 241, 0.16), transparent 28rem),
+    radial-gradient(circle at 92% 16%, rgba(6, 182, 212, 0.12), transparent 26rem),
+    linear-gradient(145deg, #f8faff 0%, #eef2f9 100%);
   display: flex;
   justify-content: center;
   align-items: center;
-  padding: 20px;
+  padding: 40px 24px;
 }
 
 .content-wrapper {
   text-align: center;
-  max-width: 1200px;
+  max-width: 1320px;
   width: 100%;
   position: relative;
 }
@@ -482,66 +485,93 @@ const handleNavigate = (type) => {
 }
 
 .main-title {
-  font-size: 3.5rem;
-  color: #2c3e50;
-  margin-bottom: 1rem;
-  font-weight: 700;
-  letter-spacing: 2px;
+  margin: 36px 0 12px;
+  color: #18213a;
+  font-size: 3.25rem;
+  font-weight: 780;
+  letter-spacing: -0.045em;
+  line-height: 1.1;
 }
 
 .subtitle {
-  font-size: 1.5rem;
-  color: #5e6d82;
-  margin-bottom: 4rem;
+  max-width: 720px;
+  margin: 0 auto 3rem;
+  color: #667085;
+  font-size: 1.15rem;
+  line-height: 1.7;
 }
 
 .cards-container {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: 30px;
-  padding: 20px;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 18px;
+  padding: 12px 0;
 }
 
 .nav-card {
-  background: rgba(255, 255, 255, 0.9);
-  border-radius: 16px;
-  padding: 40px 20px;
+  position: relative;
+  overflow: hidden;
+  min-height: 216px;
+  background: rgba(255, 255, 255, 0.82);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  border-radius: 18px;
+  padding: 30px 22px 26px;
   cursor: pointer;
-  transition: all 0.3s ease;
-  box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
+  transition: transform 200ms ease, box-shadow 200ms ease, border-color 200ms ease;
+  box-shadow: 0 8px 24px rgba(35, 45, 75, 0.07);
   display: flex;
   flex-direction: column;
   align-items: center;
 
+  &::before {
+    position: absolute;
+    top: 0;
+    left: 24px;
+    right: 24px;
+    height: 2px;
+    border-radius: 0 0 4px 4px;
+    background: linear-gradient(90deg, transparent, rgba(79, 70, 229, 0.7), transparent);
+    opacity: 0;
+    content: '';
+    transition: opacity 200ms ease;
+  }
+
   &:hover {
-    transform: translateY(-10px);
-    box-shadow: 0 20px 30px rgba(0, 0, 0, 0.1);
-    background: #fff;
+    transform: translateY(-5px);
+    border-color: rgba(79, 70, 229, 0.22);
+    box-shadow: 0 18px 38px rgba(40, 50, 85, 0.13);
+
+    &::before {
+      opacity: 1;
+    }
   }
 
   h3 {
-    font-size: 1.5rem;
-    color: #2c3e50;
-    margin: 20px 0 10px;
+    margin: 18px 0 8px;
+    color: #26324b;
+    font-size: 1.12rem;
+    font-weight: 700;
   }
 
   p {
-    color: #7f8c8d;
-    line-height: 1.5;
+    color: #778195;
+    line-height: 1.65;
     margin: 0;
   }
 }
 
 .card-icon {
-  width: 80px;
-  height: 80px;
-  border-radius: 50%;
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 40px;
-  margin-bottom: 10px;
-  transition: all 0.3s ease;
+  font-size: 30px;
+  margin-bottom: 4px;
+  transition: transform 200ms ease;
 
   &.ai-icon {
     background: #e8f4ff;
@@ -615,7 +645,7 @@ const handleNavigate = (type) => {
 }
 
 .nav-card:hover .card-icon {
-  transform: scale(1.1);
+  transform: translateY(-2px) scale(1.04);
 }
 
 @media screen and (max-width: 1920px) {

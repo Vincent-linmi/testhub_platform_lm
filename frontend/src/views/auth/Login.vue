@@ -450,7 +450,7 @@ onUnmounted(() => {
 .login-container {
   height: 100vh;
   display: flex;
-  background: #f5f7fa;
+  background: #f4f6fb;
   overflow: hidden;
 }
 
@@ -462,7 +462,10 @@ onUnmounted(() => {
 /* 左侧展示区域 */
 .showcase-section {
   flex: 1;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background:
+    radial-gradient(circle at 16% 12%, rgba(103, 232, 249, 0.18), transparent 24rem),
+    radial-gradient(circle at 88% 82%, rgba(129, 140, 248, 0.2), transparent 28rem),
+    linear-gradient(145deg, #141d3a 0%, #302c78 55%, #4338ca 100%);
   position: relative;
   display: flex;
   align-items: center;
@@ -697,11 +700,11 @@ onUnmounted(() => {
 
 /* 右侧登录表单 */
 .login-section {
-  width: 500px;
+  width: min(520px, 42vw);
   display: flex;
   align-items: center;
   justify-content: center;
-  background: white;
+  background: radial-gradient(circle at 100% 0%, rgba(79, 70, 229, 0.06), transparent 18rem), white;
   padding: 60px;
   position: relative;
 
@@ -716,9 +719,10 @@ onUnmounted(() => {
     animation: fadeIn 0.8s ease-out;
 
     h2 {
-      font-size: 28px;
-      font-weight: 700;
-      color: #303133;
+      font-size: 30px;
+      font-weight: 750;
+      color: var(--th-text);
+      letter-spacing: -0.03em;
       margin: 0 0 12px 0;
     }
 
@@ -733,7 +737,7 @@ onUnmounted(() => {
   .mode-tabs {
     display: flex;
     background: #f0f2f5;
-    border-radius: 8px;
+    border-radius: 10px;
     padding: 4px;
     margin-bottom: 24px;
 
@@ -750,7 +754,7 @@ onUnmounted(() => {
 
       &.active {
         background: white;
-        color: #667eea;
+        color: var(--th-primary);
         font-weight: 600;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
       }
@@ -793,13 +797,13 @@ onUnmounted(() => {
       height: 48px;
       font-size: 16px;
       font-weight: 600;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: linear-gradient(135deg, #5b55e7 0%, #4338ca 100%);
       border: none;
       transition: all 0.3s ease;
 
       &:hover {
         transform: translateY(-2px);
-        box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        box-shadow: 0 10px 20px rgba(79, 70, 229, 0.26);
       }
 
       &:active {

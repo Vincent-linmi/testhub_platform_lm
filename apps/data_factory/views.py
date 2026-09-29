@@ -1144,7 +1144,17 @@ class DataFactoryViewSet(viewsets.ModelViewSet):
                     'example': example_templates.get(func_name, syntax_templates[func_name]),
                     'category': '时间日期'
                 })
-        
+
+        # 环境变量函数：读取项目 .env / 系统环境变量（账号密码等敏感值不该写进用例里）
+        if 'env' not in [f['name'] for f in variable_functions]:
+            variable_functions.append({
+                'name': 'env',
+                'syntax': '${env(变量名)}',
+                'desc': '读取项目根目录 .env 或系统环境变量，用于放账号密码等敏感值',
+                'example': '${env(LINMI_PASSWORD)}',
+                'category': '环境变量'
+            })
+
         # 缓存结果，30分钟过期（静态数据）
         cache.set(cache_key, variable_functions, 1800)
 

@@ -117,6 +117,9 @@ class VariableResolver:
             'date': self._date,
             'time': self._time,
             'date_offset': self._date_offset,
+
+            # 环境变量（读取项目 .env / 系统环境变量，用于放账号密码等敏感值）
+            'env': self._call_env_tool,
         }
     
     def resolve(self, text):
@@ -260,6 +263,32 @@ class VariableResolver:
             # 移除引号
             return arg.strip('\'"')
     
+    def _call_env_tool(self, func_name, args):
+        """读取环境变量 / 项目 .env 配置
+
+        用法：${env(LINMI_ACCOUNT)}、${env(LINMI_PASSWORD)}
+        取值优先级：系统环境变量 > 项目根目录 .env（python-decouple 的既有行为）
+
+        存在的意义：UI/接口用例里不该出现明文账号密码，值统一放 .env（已被 gitignore），
+        用例步骤里只写 ${env(XXX)}，这样密码既不进数据库也不进版本库。
+        """
+        if not args or args[0] in (None, ''):
+            raise ValueError('env() 需要一个参数，例如 ${env(LINMI_ACCOUNT)}')
+
+        name = str(args[0]).strip().strip('\'"')
+        if not name:
+            raise ValueError('env() 的变量名不能为空')
+
+        import os
+        from decouple import config as _config
+
+        value = os.environ.get(name)
+        if value is None:
+            value = _config(name, default=None)
+        if value is None:
+            raise ValueError(f'未配置的环境变量：{name}（请在项目根目录 .env 里加一行 {name}=值）')
+        return value
+
     def _call_random_tool(self, func_name, args):
         """调用随机工具"""
         tool_mapping = {

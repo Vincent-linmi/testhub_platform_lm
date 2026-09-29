@@ -51,20 +51,22 @@
         <el-table-column prop="owner.username" :label="$t('uiAutomation.project.owner')" width="100" />
         <el-table-column prop="created_at" :label="$t('uiAutomation.common.createTime')" width="180" :formatter="formatDate" />
         <el-table-column prop="updated_at" :label="$t('uiAutomation.common.updateTime')" width="180" :formatter="formatDate" />
-        <el-table-column :label="$t('uiAutomation.common.operation')" width="180" fixed="right">
+        <el-table-column :label="$t('uiAutomation.common.operation')" width="228" fixed="right">
           <template #default="{ row }">
-            <el-button size="small" type="primary" @click="goToProjectDetail(row.id)">
-              <el-icon><View /></el-icon>
-              {{ $t('uiAutomation.common.view') }}
-            </el-button>
-            <el-button size="small" @click="editProject(row)">
-              <el-icon><Edit /></el-icon>
-              {{ $t('uiAutomation.common.edit') }}
-            </el-button>
-            <el-button size="small" type="danger" @click="deleteProject(row.id)">
-              <el-icon><Delete /></el-icon>
-              {{ $t('uiAutomation.common.delete') }}
-            </el-button>
+            <div class="project-row-actions">
+              <el-button size="small" type="primary" plain @click="goToProjectDetail(row.id)">
+                <el-icon><View /></el-icon>
+                {{ $t('uiAutomation.common.view') }}
+              </el-button>
+              <el-button size="small" @click="editProject(row)">
+                <el-icon><Edit /></el-icon>
+                {{ $t('uiAutomation.common.edit') }}
+              </el-button>
+              <el-button size="small" type="danger" plain @click="deleteProject(row.id)">
+                <el-icon><Delete /></el-icon>
+                {{ $t('uiAutomation.common.delete') }}
+              </el-button>
+            </div>
           </template>
         </el-table-column>
       </el-table>
@@ -547,6 +549,18 @@ onMounted(() => {
 
 .filter-bar {
   margin-bottom: 20px;
+}
+
+.project-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.project-row-actions :deep(.el-button) {
+  min-width: 60px;
+  margin-left: 0;
 }
 
 .pagination-container {

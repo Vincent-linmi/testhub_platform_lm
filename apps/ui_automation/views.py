@@ -322,7 +322,10 @@ class ElementViewSet(viewsets.ModelViewSet):
                 'validation_status': element.validation_status,
                 'usage_count': element.usage_count,
                 'group_id': element.group_id,  # 用于前端关联到页面
+                'group_name': element.group.name if element.group else '',
                 'page': element.page,  # 保留向后兼容
+                'component_name': element.component_name,
+                'description': element.description,
                 'children': []
             }
             element_data_list.append(element_data)

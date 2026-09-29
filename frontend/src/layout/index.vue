@@ -9,9 +9,9 @@
         <el-menu
           :default-active="$route.path"
           router
-          background-color="#001529"
-          text-color="#fff"
-          active-text-color="#1890ff"
+          background-color="transparent"
+          text-color="#aeb9d3"
+          active-text-color="#ffffff"
         >
           <!-- AI用例生成模块菜单 -->
           <template v-if="currentModule === 'ai-generation'">
@@ -607,6 +607,7 @@ const handleCommand = (command) => {
   height: 100vh;
   width: 100vw;
   overflow: hidden;
+  background: var(--th-canvas);
 }
 
 .layout > .el-container {
@@ -615,36 +616,45 @@ const handleCommand = (command) => {
 }
 
 .logo {
-  height: 60px;
+  height: 72px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background-color: #001529;
+  margin: 0 14px;
+  background-color: transparent;
   color: white;
-  border-bottom: 1px solid #1f1f1f;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   flex-shrink: 0;
 
 		.logo-img {
-			width: 100%;
-			height: 100%;
-			object-fit: fill;
+			width: calc(100% - 16px);
+			height: 46px;
+			object-fit: contain;
+			border-radius: 10px;
+			box-shadow: 0 6px 18px rgba(0, 0, 0, 0.14);
 		}
 	}
 
 .el-aside {
-  background-color: #001529;
+  position: relative;
+  background:
+    radial-gradient(circle at 20% 4%, rgba(99, 102, 241, 0.26), transparent 14rem),
+    linear-gradient(180deg, #121b35 0%, #0b1224 100%);
   height: 100%;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   transition: width 0.3s ease;
   width: 240px !important;
+  box-shadow: 8px 0 28px rgba(15, 23, 42, 0.12);
+  z-index: 2;
 
   .el-menu {
     flex: 1;
     overflow-y: auto;
     overflow-x: hidden;
     border-right: none;
+    padding: 10px 10px 20px;
     
     &::-webkit-scrollbar {
       width: 0;
@@ -656,6 +666,33 @@ const handleCommand = (command) => {
   :deep(.el-sub-menu__title),
   :deep(.el-menu-item) {
     font-size: 14px;
+    min-width: 0;
+    height: 46px;
+    margin: 3px 0;
+    border-radius: 10px;
+    transition: color var(--th-transition), background-color var(--th-transition), transform var(--th-transition);
+  }
+
+  :deep(.el-sub-menu__title:hover),
+  :deep(.el-menu-item:hover) {
+    color: #fff !important;
+    background: rgba(255, 255, 255, 0.08) !important;
+  }
+
+  :deep(.el-menu-item.is-active) {
+    color: #fff !important;
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.95), rgba(79, 70, 229, 0.82)) !important;
+    box-shadow: 0 6px 18px rgba(49, 46, 129, 0.32);
+  }
+
+  :deep(.el-menu-item .el-icon),
+  :deep(.el-sub-menu__title .el-icon) {
+    font-size: 17px;
+  }
+
+  :deep(.el-sub-menu .el-menu-item) {
+    height: 42px;
+    margin-left: 8px;
   }
 }
 
@@ -681,18 +718,21 @@ const handleCommand = (command) => {
 }
 
 .el-header {
-  background-color: white;
-  border-bottom: 1px solid #e8e8e8;
+  background-color: rgba(255, 255, 255, 0.88);
+  border-bottom: 1px solid rgba(228, 233, 242, 0.92);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
   padding: 0;
   flex-shrink: 0;
-  height: 60px !important;
+  height: 64px !important;
+  z-index: 1;
 
   .header-content {
     height: 100%;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0 20px;
+    padding: 0 24px;
   }
 
   .header-left {
@@ -702,6 +742,16 @@ const handleCommand = (command) => {
     :deep(.el-breadcrumb) {
       font-size: 14px;
     }
+
+    :deep(.el-breadcrumb__inner) {
+      color: var(--th-text-secondary);
+      font-weight: 500;
+    }
+
+    :deep(.el-breadcrumb__item:last-child .el-breadcrumb__inner) {
+      color: var(--th-text);
+      font-weight: 650;
+    }
   }
 
   .user-info {
@@ -709,6 +759,14 @@ const handleCommand = (command) => {
     align-items: center;
     cursor: pointer;
     white-space: nowrap;
+    min-height: 40px;
+    padding: 4px 8px 4px 4px;
+    border-radius: 999px;
+    transition: background-color var(--th-transition);
+
+    &:hover {
+      background: var(--th-primary-soft);
+    }
 
     .username {
       margin: 0 8px;
@@ -721,7 +779,7 @@ const handleCommand = (command) => {
 .header-right {
     display: flex;
     align-items: center;
-    gap: 20px;
+    gap: 12px;
   }
 
   .language-dropdown {
@@ -732,6 +790,10 @@ const handleCommand = (command) => {
       color: #303133;
       font-size: 14px;
       outline: none;
+      min-height: 40px;
+      padding: 0 12px;
+      border-radius: 999px;
+      transition: color var(--th-transition), background-color var(--th-transition);
 
       &:focus {
         outline: none;
@@ -748,7 +810,8 @@ const handleCommand = (command) => {
       }
 
       &:hover {
-        color: #1890ff;
+        color: var(--th-primary);
+        background: var(--th-primary-soft);
       }
     }
   }
@@ -773,11 +836,25 @@ const handleCommand = (command) => {
   }
 
 .el-main {
-  background-color: #f5f5f5;
-  padding: 20px;
+  background:
+    radial-gradient(circle at 96% 0%, rgba(79, 70, 229, 0.055), transparent 28rem),
+    var(--th-canvas);
+  padding: 24px;
   flex: 1;
   overflow-y: auto;
   overflow-x: hidden;
+  scrollbar-color: #c5ccda transparent;
+
+  &::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: #c5ccda;
+    border: 2px solid transparent;
+    border-radius: 999px;
+    background-clip: padding-box;
+  }
 }
 
 @media screen and (max-width: 1920px) {

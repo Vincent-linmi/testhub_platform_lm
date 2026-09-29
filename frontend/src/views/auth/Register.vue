@@ -333,24 +333,31 @@ refreshCaptcha()
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  padding: 24px;
+  background:
+    radial-gradient(circle at 14% 16%, rgba(103, 232, 249, 0.2), transparent 24rem),
+    radial-gradient(circle at 84% 78%, rgba(129, 140, 248, 0.2), transparent 28rem),
+    linear-gradient(145deg, #141d3a 0%, #302c78 55%, #4338ca 100%);
 }
 
 .register-form {
   width: 520px;
-  padding: 40px;
-  background: white;
-  border-radius: 10px;
-  box-shadow: 0 15px 35px rgba(0, 0, 0, 0.1);
+  max-width: 100%;
+  padding: 42px;
+  background: rgba(255, 255, 255, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.7);
+  border-radius: 20px;
+  box-shadow: 0 24px 60px rgba(8, 15, 40, 0.28);
 
   .form-header {
     text-align: center;
     margin-bottom: 30px;
 
     h2 {
-      color: #303133;
-      font-size: 28px;
-      font-weight: 600;
+      color: var(--th-text);
+      font-size: 30px;
+      font-weight: 750;
+      letter-spacing: -0.03em;
       margin: 0 0 10px 0;
     }
 
@@ -373,7 +380,7 @@ refreshCaptcha()
     margin-top: 20px;
 
     a {
-      color: #409eff;
+      color: var(--th-primary);
       text-decoration: none;
 
       &:hover {

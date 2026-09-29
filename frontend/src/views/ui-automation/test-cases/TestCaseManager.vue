@@ -74,46 +74,54 @@
           <div class="detail-header">
             <h3>{{ selectedTestCase.name }}</h3>
             <div class="detail-actions">
-              <el-button size="small" @click="addStep">
-                <el-icon><Plus /></el-icon>
-                {{ t('uiAutomation.testCase.addStep') }}
-              </el-button>
-              <el-button size="small" type="primary" @click="saveTestCase">
-                <el-icon><Check /></el-icon>
-                {{ t('uiAutomation.testCase.saveTestCase') }}
-              </el-button>
-              <el-select v-model="selectedEngine" :placeholder="t('uiAutomation.testCase.selectEngine')" size="small" style="width: 130px; margin-right: 10px">
-                <el-option label="Playwright" value="playwright" />
-                <el-option label="Selenium" value="selenium" />
-              </el-select>
-              <el-select v-model="selectedBrowser" :placeholder="t('uiAutomation.testCase.selectBrowser')" size="small" style="width: 120px; margin-right: 10px">
-                <el-option label="Chrome" value="chrome" />
-                <el-option label="Firefox" value="firefox" />
-                <el-option label="Safari" value="safari" />
-                <el-option label="Edge" value="edge" />
-              </el-select>
-              <el-select v-model="headlessMode" :placeholder="t('uiAutomation.testCase.runModeLabel')" size="small" style="width: 110px; margin-right: 10px">
-                <el-option :label="t('uiAutomation.testCase.headedMode')" :value="false" />
-                <el-option :label="t('uiAutomation.testCase.headlessMode')" :value="true" />
-              </el-select>
-              <el-button size="small" type="success" @click="runTestCase(selectedTestCase)" :loading="isRunning">
-                <el-icon v-if="!isRunning"><CaretRight /></el-icon>
-                {{ isRunning ? t('uiAutomation.testCase.running') : t('uiAutomation.testCase.runLabel') }}
-              </el-button>
-              <el-button size="small" v-if="executionResult" @click="toggleView">
-                <el-icon><component :is="showSteps ? 'View' : 'Edit'" /></el-icon>
-                {{ showSteps ? t('uiAutomation.testCase.viewResult') : t('uiAutomation.testCase.editSteps') }}
-              </el-button>
-              <el-button
-                size="small"
-                v-if="executionResult && !showSteps"
-                type="success"
-                @click="runTestCase(selectedTestCase)"
-                :loading="isRunning"
-              >
-                <el-icon v-if="!isRunning"><Refresh /></el-icon>
-                {{ t('uiAutomation.testCase.rerun') }}
-              </el-button>
+              <el-button-group class="detail-actions__edit">
+                <el-button size="small" @click="addStep">
+                  <el-icon><Plus /></el-icon>
+                  {{ t('uiAutomation.testCase.addStep') }}
+                </el-button>
+                <el-button size="small" type="primary" @click="saveTestCase">
+                  <el-icon><Check /></el-icon>
+                  {{ t('uiAutomation.testCase.saveTestCase') }}
+                </el-button>
+              </el-button-group>
+
+              <div class="detail-actions__run-config">
+                <el-select v-model="selectedEngine" :placeholder="t('uiAutomation.testCase.selectEngine')" size="small" class="engine-select">
+                  <el-option label="Playwright" value="playwright" />
+                  <el-option label="Selenium" value="selenium" />
+                </el-select>
+                <el-select v-model="selectedBrowser" :placeholder="t('uiAutomation.testCase.selectBrowser')" size="small" class="browser-select">
+                  <el-option label="Chrome" value="chrome" />
+                  <el-option label="Firefox" value="firefox" />
+                  <el-option label="Safari" value="safari" />
+                  <el-option label="Edge" value="edge" />
+                </el-select>
+                <el-select v-model="headlessMode" :placeholder="t('uiAutomation.testCase.runModeLabel')" size="small" class="mode-select">
+                  <el-option :label="t('uiAutomation.testCase.headedMode')" :value="false" />
+                  <el-option :label="t('uiAutomation.testCase.headlessMode')" :value="true" />
+                </el-select>
+                <el-button size="small" type="success" @click="runTestCase(selectedTestCase)" :loading="isRunning">
+                  <el-icon v-if="!isRunning"><CaretRight /></el-icon>
+                  {{ isRunning ? t('uiAutomation.testCase.running') : t('uiAutomation.testCase.runLabel') }}
+                </el-button>
+              </div>
+
+              <div v-if="executionResult" class="detail-actions__result">
+                <el-button size="small" @click="toggleView">
+                  <el-icon><component :is="showSteps ? 'View' : 'Edit'" /></el-icon>
+                  {{ showSteps ? t('uiAutomation.testCase.viewResult') : t('uiAutomation.testCase.editSteps') }}
+                </el-button>
+                <el-button
+                  v-if="!showSteps"
+                  size="small"
+                  type="success"
+                  @click="runTestCase(selectedTestCase)"
+                  :loading="isRunning"
+                >
+                  <el-icon v-if="!isRunning"><Refresh /></el-icon>
+                  {{ t('uiAutomation.testCase.rerun') }}
+                </el-button>
+              </div>
             </div>
           </div>
 
@@ -126,7 +134,7 @@
               </el-button>
             </div>
 
-            <div class="steps-scroll-container">
+            <div ref="stepsScrollContainer" class="steps-scroll-container">
               <div class="steps-list">
                 <draggable
                   v-model="currentSteps"
@@ -165,14 +173,38 @@
                             size="small"
                             style="width: 200px"
                             filterable
+                            autocomplete="new-password"
+                            name="testhub-ui-element-picker"
+                            :filter-method="filterElementOptions"
+                            popper-class="test-case-element-dropdown"
+                            @visible-change="onElementPickerVisibleChange"
                             @change="onElementChange(element)"
                           >
-                            <el-option
-                              v-for="elem in availableElements"
-                              :key="elem.id"
-                              :label="`${elem.name} (${elem.locator_value})`"
-                              :value="elem.id"
-                            />
+                            <el-option-group
+                              v-for="group in groupedAvailableElements"
+                              :key="group.page"
+                              :label="`${group.page}（${group.elements.length}）`"
+                            >
+                              <el-option
+                                v-for="elem in group.elements"
+                                :key="elem.id"
+                                :label="getElementSelectedLabel(elem)"
+                                :value="elem.id"
+                              >
+                                <div class="element-option" :title="elem.locator_value">
+                                  <div class="element-option__header">
+                                    <span class="element-option__name">{{ elem.name }}</span>
+                                    <span v-if="elem.component_name" class="element-option__badge">
+                                      {{ elem.component_name }}
+                                    </span>
+                                    <span class="element-option__badge element-option__badge--strategy">
+                                      {{ elem.locator_strategy || '未知策略' }}
+                                    </span>
+                                  </div>
+                                  <div class="element-option__locator">{{ elem.locator_value }}</div>
+                                </div>
+                              </el-option>
+                            </el-option-group>
                           </el-select>
                         </div>
                         <div class="step-right">
@@ -501,7 +533,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { ref, reactive, computed, nextTick, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Search, Plus, Edit, Delete, Check, CaretRight, ArrowUp, ArrowDown, Rank, Picture, Warning, View, ZoomIn, Refresh, WarningFilled, MagicStick
@@ -514,7 +546,7 @@ const { t } = useI18n()
 
 import {
   getUiProjects,
-  getElements,
+  getElementTree,
   createTestCase,
   updateTestCase,
   deleteTestCase as deleteTestCaseApi,
@@ -531,7 +563,9 @@ const projectId = ref('')
 const testCases = ref([])
 const selectedTestCase = ref(null)
 const currentSteps = ref([])
+const stepsScrollContainer = ref(null)
 const availableElements = ref([])
+const elementFilterKeyword = ref('')
 const searchKeyword = ref('')
 const showCreateDialog = ref(false)
 const editingTestCase = ref(null)
@@ -571,6 +605,51 @@ const filteredTestCases = computed(() => {
     tc.description?.includes(searchKeyword.value)
   )
 })
+
+const getElementSearchText = element => [
+  element.page,
+  element.group_name,
+  element.component_name,
+  element.name,
+  element.locator_strategy,
+  element.locator_value
+].filter(Boolean).join(' ').toLowerCase()
+
+const filteredAvailableElements = computed(() => {
+  const keyword = elementFilterKeyword.value
+  if (!keyword) return availableElements.value
+  return availableElements.value.filter(element => getElementSearchText(element).includes(keyword))
+})
+
+const groupedAvailableElements = computed(() => {
+  const groups = new Map()
+
+  filteredAvailableElements.value.forEach(element => {
+    const page = element.page?.trim() || element.group_name?.trim() || '未分类页面'
+    if (!groups.has(page)) {
+      groups.set(page, [])
+    }
+    groups.get(page).push(element)
+  })
+
+  return Array.from(groups, ([page, elements]) => ({ page, elements }))
+})
+
+// 搜索内容和选中后的回显分离，避免把完整 locator 塞进输入框。
+const getElementSelectedLabel = element => {
+  const page = element.page?.trim() || element.group_name?.trim()
+  return page ? `${element.name} · ${page}` : element.name
+}
+
+const filterElementOptions = keyword => {
+  elementFilterKeyword.value = (keyword || '').trim().toLowerCase()
+}
+
+const onElementPickerVisibleChange = visible => {
+  if (!visible) {
+    elementFilterKeyword.value = ''
+  }
+}
 
 // 解析执行日志
 const parsedExecutionLogs = computed(() => {
@@ -617,10 +696,14 @@ const loadElements = async () => {
   }
 
   try {
-    const response = await getElements({ project: projectId.value })
-    availableElements.value = response.data.results || response.data
+    // 普通元素列表接口使用全局分页（默认仅返回 20 条）。元素树接口返回
+    // 当前项目的完整扁平元素列表，适合步骤编辑器一次性搜索和选择。
+    const response = await getElementTree({ project: projectId.value })
+    availableElements.value = Array.isArray(response.data) ? response.data : []
   } catch (error) {
+    availableElements.value = []
     console.error('获取元素列表失败:', error)
+    ElMessage.error('获取元素列表失败')
   }
 }
 
@@ -657,7 +740,12 @@ const selectTestCase = (testCase) => {
   showSteps.value = true
 }
 
-const addStep = () => {
+const addStep = async () => {
+  if (!selectedTestCase.value) return
+
+  // 执行结果视图中新增步骤时，先回到编辑视图，避免步骤被静默追加在隐藏区域。
+  showSteps.value = true
+
   const newStep = {
     id: Date.now(),
     action_type: 'click',
@@ -670,6 +758,12 @@ const addStep = () => {
     expanded: true
   }
   currentSteps.value.push(newStep)
+
+  await nextTick()
+  stepsScrollContainer.value?.scrollTo({
+    top: stepsScrollContainer.value.scrollHeight,
+    behavior: 'smooth'
+  })
 }
 
 const removeStep = (index) => {
@@ -1347,19 +1441,64 @@ onMounted(async () => {
 .detail-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
+  gap: 20px;
   margin-bottom: 20px;
   padding-bottom: 15px;
   border-bottom: 1px solid #e6e6e6;
 }
 
 .detail-header h3 {
+  flex: 1 1 auto;
+  min-width: 120px;
   margin: 0;
+  line-height: 24px;
+  overflow-wrap: anywhere;
 }
 
 .detail-actions {
+  flex: 0 1 auto;
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
   gap: 10px;
+  min-width: 0;
+}
+
+.detail-actions__run-config,
+.detail-actions__result {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.detail-actions :deep(.el-button + .el-button),
+.detail-actions__result :deep(.el-button + .el-button) {
+  margin-left: 0;
+}
+
+.engine-select {
+  width: 130px;
+}
+
+.browser-select {
+  width: 120px;
+}
+
+.mode-select {
+  width: 110px;
+}
+
+@media (max-width: 1200px) {
+  .detail-header {
+    flex-wrap: wrap;
+  }
+
+  .detail-actions {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+  }
 }
 
 .steps-container {
@@ -1914,5 +2053,75 @@ onMounted(async () => {
 .variable-helper-btn:hover {
   background-color: #5daf34;
   border-color: #5daf34;
+}
+
+/* 下拉层通过 Teleport 挂在 body 下，需使用 :global 才能从 scoped 样式命中。 */
+:global(.test-case-element-dropdown .el-select-dropdown__wrap) {
+  max-height: min(420px, 60vh);
+}
+
+:global(.test-case-element-dropdown) {
+  width: min(760px, calc(100vw - 32px)) !important;
+}
+
+:global(.test-case-element-dropdown .el-select-group__title) {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  height: 34px;
+  padding-left: 16px;
+  color: #606266;
+  font-weight: 600;
+  background: #f5f7fa;
+}
+
+:global(.test-case-element-dropdown .el-select-dropdown__item) {
+  height: auto;
+  min-height: 58px;
+  padding: 8px 16px;
+  line-height: 1.35;
+}
+
+.element-option {
+  min-width: 0;
+}
+
+.element-option__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.element-option__name {
+  overflow: hidden;
+  color: #303133;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.element-option__badge {
+  flex: none;
+  padding: 1px 6px;
+  border-radius: 4px;
+  color: #606266;
+  font-size: 11px;
+  background: #f0f2f5;
+}
+
+.element-option__badge--strategy {
+  color: #337ecc;
+  background: #ecf5ff;
+}
+
+.element-option__locator {
+  margin-top: 4px;
+  overflow: hidden;
+  color: #909399;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 </style>
