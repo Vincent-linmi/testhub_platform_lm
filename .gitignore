@@ -24,10 +24,13 @@ logs/*/*
 .sql
 static_files/img/
 .bak
-# 忽略所有 app/*/migrations/ 目录下的所有内容 (包括文件和子目录)
-apps/*/migrations/*
-# 使用否定模式，例外地跟踪 __init__.py 文件
-!apps/*/migrations/__init__.py
+# ⚠️ 严禁忽略 app 的迁移文件！
+# 原规则 apps/*/migrations/* 会导致新克隆缺少迁移文件，使 makemigrations / migrate 直接失败：
+#   NodeNotFoundError: Migration perf_testing.0001_initial dependencies reference
+#   nonexistent parent node ('api_testing', '0001_initial')
+# 原因是 mcp / monitor / perf_testing 的迁移被提交了，而它们依赖的 api_testing / users 等
+# 迁移却被本规则排除，仓库自相矛盾。
+# Django 官方要求：迁移文件必须提交到版本库（migrations are committed to version control）。
 
 # 忽略 allure-static 下的所有文件（运行时生成）
 media/allure-static/*
