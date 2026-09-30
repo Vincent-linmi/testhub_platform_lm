@@ -206,7 +206,7 @@ class Command(BaseCommand):
                                         test_suite=test_suite,
                                         engine=task.engine,
                                         browser=task.browser,
-                                        headless=task.headless,
+                                        headless=True,
                                         executed_by=task.created_by
                                     )
                                     executor.run()
@@ -346,6 +346,17 @@ class Command(BaseCommand):
                                 results = []
 
                                 for test_case in test_cases_list:
+                                    if test_case.data_driven_enabled:
+                                        from apps.ui_automation.data_driven import execute_rows
+                                        row_executions = execute_rows(
+                                            test_case, task.created_by, engine=task.engine,
+                                            browser=task.browser, headless=True, source='scheduled',
+                                        )
+                                        success_count += sum(item.status == 'passed' for item in row_executions)
+                                        failed_count += sum(item.status != 'passed' for item in row_executions)
+                                        results.extend({'case_id': test_case.id, 'data_index': item.data_index,
+                                                        'status': item.status} for item in row_executions)
+                                        continue
                                     temp_suite = None
                                     try:
                                         # 创建临时测试套件
@@ -366,7 +377,7 @@ class Command(BaseCommand):
                                             test_suite=temp_suite,
                                             engine=task.engine,
                                             browser=task.browser,
-                                            headless=task.headless,
+                                            headless=True,
                                             executed_by=task.created_by
                                         )
                                         executor.run()

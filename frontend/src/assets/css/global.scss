@@ -16,6 +16,11 @@
   --th-surface-subtle: #f8fafc;
   --th-canvas: #f3f6fb;
   --th-sidebar: #111a33;
+  --th-space-1: 4px;
+  --th-space-2: 8px;
+  --th-space-3: 12px;
+  --th-space-4: 16px;
+  --th-space-6: 24px;
   --th-radius-sm: 8px;
   --th-radius: 12px;
   --th-radius-lg: 16px;
@@ -194,16 +199,16 @@ a {
     transform: translateY(1px);
   }
 
-  &--primary:not(.is-plain):not(.is-link):not(.is-text) {
+  &--primary:not(.is-disabled):not(.is-plain):not(.is-link):not(.is-text) {
     border-color: transparent;
-    background: linear-gradient(135deg, #5b55e7 0%, var(--th-primary) 100%);
-    box-shadow: 0 4px 10px rgba(79, 70, 229, 0.18);
+    background: var(--th-primary);
+    box-shadow: var(--th-shadow-sm);
 
     &:hover,
     &:focus {
       border-color: transparent;
-      background: linear-gradient(135deg, #6862ea 0%, #5147d7 100%);
-      box-shadow: 0 6px 16px rgba(79, 70, 229, 0.25);
+      background: var(--th-primary-hover);
+      box-shadow: var(--th-shadow-sm);
     }
   }
 }
@@ -383,7 +388,7 @@ a {
 
 @media screen and (max-width: 768px) {
   body {
-    font-size: 13px;
+    font-size: 14px;
   }
 
   .page-container {

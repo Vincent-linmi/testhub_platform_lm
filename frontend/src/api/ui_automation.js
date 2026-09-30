@@ -244,6 +244,14 @@ export function updateTestCaseOrder(suiteId, testCaseOrders) {
 }
 
 // 运行测试套件
+export function runTestSuiteLocally(suiteId, data) {
+  return request({ url: `/ui-automation/test-suites/${suiteId}/run-local/`, method: 'post', data })
+}
+
+export function getLocalSuiteExecutionStatus(executionId) {
+  return request({ url: `/ui-automation/test-executions/${executionId}/local-status/`, method: 'get' })
+}
+
 export function runTestSuite(suiteId, data) {
   return request({
     url: `/ui-automation/test-suites/${suiteId}/run_suite/`,
@@ -649,6 +657,41 @@ export function deleteScriptElementUsage(id) {
 
 // 测试用例相关API
 
+// 获取测试用例分组
+export function getTestCaseGroups(params) {
+  return request({
+    url: '/ui-automation/test-case-groups/',
+    method: 'get',
+    params
+  })
+}
+
+// 创建测试用例分组
+export function createTestCaseGroup(data) {
+  return request({
+    url: '/ui-automation/test-case-groups/',
+    method: 'post',
+    data
+  })
+}
+
+// 更新测试用例分组
+export function updateTestCaseGroup(id, data) {
+  return request({
+    url: `/ui-automation/test-case-groups/${id}/`,
+    method: 'patch',
+    data
+  })
+}
+
+// 删除测试用例分组
+export function deleteTestCaseGroup(id) {
+  return request({
+    url: `/ui-automation/test-case-groups/${id}/`,
+    method: 'delete'
+  })
+}
+
 // 获取测试用例列表
 export function getTestCases(params) {
   return request({
@@ -702,11 +745,47 @@ export function runTestCase(testCaseId, data) {
   })
 }
 
+// 创建一次性本机 Playwright 任务，由 testhub-runner:// 按需唤起执行器
+export function runTestCaseLocally(testCaseId, data) {
+  return request({
+    url: `/ui-automation/test-cases/${testCaseId}/run-local/`,
+    method: 'post',
+    data
+  })
+}
+
+export function downloadLocalExecutionArtifact(artifactId) {
+  return request({
+    url: `/ui-automation/local-runner/artifacts/${artifactId}/download/`,
+    method: 'get',
+    responseType: 'blob'
+  })
+}
+
 // 复制测试用例
 export function copyTestCase(id) {
   return request({
     url: `/ui-automation/test-cases/${id}/copy_case/`,
     method: 'post'
+  })
+}
+
+// UI 自动化测试文件
+export function getTestFileAssets(params) {
+  return request({
+    url: '/ui-automation/test-file-assets/',
+    method: 'get',
+    params
+  })
+}
+
+export function uploadTestFileAsset(formData) {
+  return request({
+    url: '/ui-automation/test-file-assets/',
+    method: 'post',
+    data: formData,
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000
   })
 }
 
@@ -717,6 +796,10 @@ export function getTestCaseExecutions(params) {
     method: 'get',
     params
   })
+}
+
+export function getTestCaseExecution(id) {
+  return request({ url: `/ui-automation/test-case-executions/${id}/`, method: 'get' })
 }
 
 // 删除测试用例执行记录
@@ -1057,4 +1140,12 @@ export function exportAIExecutionReportPDF(id, params = {}) {
     params,
     responseType: 'blob'
   })
+}
+
+export function downloadTestFileAsset(id) {
+  return request({ url: `/ui-automation/test-file-assets/${id}/download/`, method: 'get', responseType: 'blob' })
+}
+
+export function deleteTestFileAsset(id) {
+  return request({ url: `/ui-automation/test-file-assets/${id}/`, method: 'delete' })
 }

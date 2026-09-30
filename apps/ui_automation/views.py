@@ -2,25 +2,27 @@ from rest_framework import viewsets, status
 from rest_framework.decorators import action, api_view
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.exceptions import ValidationError
 from django.contrib.auth import get_user_model
 from django.shortcuts import get_object_or_404
-from django.http import HttpResponse
+from django.http import HttpResponse, FileResponse
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters
-from django.db import models
+from django.db import models, transaction
 from django.utils import timezone
 import logging
 import json
 import re
 import random
 import time
+import hashlib
 
 from .models import (
     UiProject, LocatorStrategy, Element, TestScript, TestSuite,
     TestSuiteScript, TestExecution, Screenshot,
     ElementGroup, PageObject, PageObjectElement, ScriptStep, ScriptElementUsage,
-    TestCase, TestCaseStep, TestCaseExecution, OperationRecord,
-    TestCase, TestCaseStep, TestCaseExecution, OperationRecord,
+    TestCaseGroup, TestCase, TestCaseStep, TestCaseExecution, TestFileAsset, OperationRecord,
     UiScheduledTask, UiNotificationLog, UiTaskNotificationSetting,
     AICase, AIExecutionRecord
 )
@@ -37,7 +39,9 @@ from .serializers import (
     PageObjectSerializer, PageObjectCreateSerializer, PageObjectElementSerializer,
     ScriptStepSerializer, ScriptElementUsageSerializer,
     ScriptAnalysisSerializer, ElementValidationSerializer, CodeGenerationSerializer,
-    TestCaseSerializer, TestCaseStepSerializer, TestCaseExecutionSerializer, TestCaseRunSerializer,
+    TestCaseGroupSerializer, TestCaseSerializer, TestCaseStepSerializer,
+    TestCaseExecutionSerializer, TestCaseRunSerializer,
+    TestFileAssetSerializer,
     OperationRecordSerializer,
     UiScheduledTaskSerializer, UiNotificationLogSerializer, UiTaskNotificationSettingSerializer,
     AICaseSerializer, AIExecutionRecordSerializer
@@ -780,7 +784,7 @@ class TestSuiteViewSet(viewsets.ModelViewSet):
 
         engine = request.data.get('engine', 'playwright')
         browser = request.data.get('browser', 'chrome')
-        headless = request.data.get('headless', False)
+        headless = True
 
         if engine == 'selenium':
             from .selenium_engine import SeleniumTestEngine
@@ -902,6 +906,107 @@ class ScreenshotViewSet(viewsets.ModelViewSet):
         return Screenshot.objects.filter(execution__in=executions)
 
 
+class TestFileAssetViewSet(viewsets.ModelViewSet):
+    """项目级 UI 自动化测试文件。"""
+
+    serializer_class = TestFileAssetSerializer
+    permission_classes = [IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser]
+    http_method_names = ['get', 'post', 'delete', 'head', 'options']
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter, filters.SearchFilter]
+    filterset_fields = ['project']
+    search_fields = ['name']
+    ordering = ['-created_at']
+
+    def get_queryset(self):
+        user = self.request.user
+        accessible_projects = UiProject.objects.filter(
+            models.Q(owner=user) | models.Q(members=user)
+        ).distinct()
+        return TestFileAsset.objects.filter(
+            project__in=accessible_projects
+        ).select_related('project', 'created_by')
+
+    @action(detail=True, methods=['get'])
+    def download(self, request, pk=None):
+        asset = self.get_object()
+        try:
+            return FileResponse(asset.file.open('rb'), as_attachment=True, filename=asset.name)
+        except FileNotFoundError:
+            return Response({'detail': '文件记录存在，但存储文件已丢失'}, status=404)
+
+    def destroy(self, request, *args, **kwargs):
+        asset = self.get_object()
+        if TestCaseStep.objects.filter(models.Q(file_asset=asset) | models.Q(file_assets=asset)).exists():
+            raise ValidationError({'detail': '文件正在被用例引用，请先从用例步骤移除'})
+        # Pending local jobs keep a file snapshot by ID and must retain the asset too.
+        from .models import LocalExecutionJob
+        jobs = LocalExecutionJob.objects.filter(
+            models.Q(execution__project=asset.project)
+            | models.Q(suite_execution__project=asset.project),
+        ).filter(
+            models.Q(status__in=['claimed', 'running'])
+            | models.Q(status='waiting_runner', expires_at__gt=timezone.now())
+        )
+        if any(asset.id in {item['id'] for item in job.payload.get('assets', [])} for job in jobs):
+            raise ValidationError({'detail': '文件正在被本机执行任务使用，请在任务结束后删除'})
+        stored_file = asset.file
+        asset.delete()
+        stored_file.delete(save=False)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    def perform_create(self, serializer):
+        project = get_object_or_404(UiProject, pk=self.request.data.get('project'))
+        user = self.request.user
+        if project.owner_id != user.id and not project.members.filter(pk=user.id).exists():
+            raise ValidationError({'project': '无权向该项目上传测试文件'})
+
+        uploaded_file = self.request.FILES.get('file')
+        if not uploaded_file:
+            raise ValidationError({'file': '请选择要上传的文件'})
+
+        max_size = 100 * 1024 * 1024
+        if uploaded_file.size > max_size:
+            raise ValidationError({'file': '测试文件不能超过 100 MB'})
+
+        digest = hashlib.sha256()
+        for chunk in uploaded_file.chunks():
+            digest.update(chunk)
+        uploaded_file.seek(0)
+
+        serializer.save(
+            project=project,
+            created_by=user,
+            name=uploaded_file.name,
+            mime_type=uploaded_file.content_type or '',
+            file_size=uploaded_file.size,
+            sha256=digest.hexdigest(),
+        )
+
+
+class TestCaseGroupViewSet(viewsets.ModelViewSet):
+    """项目内的 UI 自动化用例分组。"""
+
+    serializer_class = TestCaseGroupSerializer
+    permission_classes = [IsAuthenticated]
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ['project']
+    ordering_fields = ['order', 'name', 'created_at']
+    ordering = ['order', 'name']
+    pagination_class = None
+
+    def get_queryset(self):
+        user = self.request.user
+        accessible_projects = UiProject.objects.filter(
+            models.Q(owner=user) | models.Q(members=user)
+        ).distinct()
+        return TestCaseGroup.objects.filter(
+            project__in=accessible_projects
+        ).select_related('project').annotate(
+            test_case_count=models.Count('test_cases')
+        )
+
+
 class TestCaseViewSet(viewsets.ModelViewSet):
     """测试用例视图集"""
     queryset = TestCase.objects.all()
@@ -911,7 +1016,69 @@ class TestCaseViewSet(viewsets.ModelViewSet):
     search_fields = ['name', 'description']
     ordering_fields = ['created_at', 'updated_at', 'name', 'priority', 'status']
     ordering = ['-created_at']
-    filterset_fields = ['project', 'status', 'priority', 'created_by']
+    filterset_fields = ['project', 'group', 'status', 'priority', 'created_by']
+
+    @staticmethod
+    def _file_asset_ids_for_step(test_case, step_data):
+        raw_ids = step_data.get('file_asset_ids')
+        if raw_ids is None:
+            legacy_id = step_data.get('file_asset_id') or step_data.get('file_asset')
+            raw_ids = [legacy_id] if legacy_id else []
+        if not isinstance(raw_ids, (list, tuple)):
+            raise ValidationError({'steps': '测试文件必须使用数组格式'})
+
+        try:
+            file_asset_ids = list(dict.fromkeys(int(asset_id) for asset_id in raw_ids if asset_id))
+        except (TypeError, ValueError):
+            raise ValidationError({'steps': '测试文件 ID 格式不正确'})
+
+        valid_ids = set(TestFileAsset.objects.filter(
+            pk__in=file_asset_ids,
+            project=test_case.project,
+        ).values_list('id', flat=True))
+        missing_ids = [asset_id for asset_id in file_asset_ids if asset_id not in valid_ids]
+        if missing_ids:
+            raise ValidationError({'steps': f'测试文件 {missing_ids} 不属于当前项目或不存在'})
+        return file_asset_ids
+
+    @classmethod
+    def _create_step(cls, test_case, step_data, step_number):
+        file_asset_ids = cls._file_asset_ids_for_step(test_case, step_data)
+        step = TestCaseStep.objects.create(
+            test_case=test_case,
+            step_number=step_number,
+            action_type=step_data.get('action_type', 'click'),
+            element_id=step_data.get('element') if step_data.get('element') else None,
+            input_value=step_data.get('input_value', ''),
+            wait_time=step_data.get('wait_time', 1000),
+            assert_type=step_data.get('assert_type', ''),
+            assert_value=step_data.get('assert_value', ''),
+            file_asset_id=file_asset_ids[0] if file_asset_ids else None,
+            file_asset_order=file_asset_ids,
+            description=step_data.get('description', '')
+        )
+        if file_asset_ids:
+            step.file_assets.set(file_asset_ids)
+        return step
+
+    @classmethod
+    def _validate_upload_step(cls, test_case, step_data):
+        from local_playwright_agent.step_runtime import validate_step
+        try:
+            validate_step(step_data, templates=True)
+        except ValueError as exc:
+            raise ValidationError({'steps': str(exc)})
+        if step_data.get('action_type') != 'uploadFile':
+            return None
+        element_id = step_data.get('element_id') or step_data.get('element')
+        if not element_id:
+            raise ValidationError({'steps': '上传文件步骤必须选择触发元素或文件输入框'})
+        if not Element.objects.filter(pk=element_id, project=test_case.project).exists():
+            raise ValidationError({'steps': f'上传元素 {element_id} 不属于当前项目或不存在'})
+        file_asset_ids = cls._file_asset_ids_for_step(test_case, step_data)
+        if not file_asset_ids:
+            raise ValidationError({'steps': '上传文件步骤必须选择测试文件'})
+        return file_asset_ids
 
     def get_queryset(self):
         # 只显示用户有权限访问的项目的测试用例
@@ -919,15 +1086,11 @@ class TestCaseViewSet(viewsets.ModelViewSet):
         accessible_projects = UiProject.objects.filter(
             models.Q(owner=user) | models.Q(members=user)
         ).distinct()
+        return TestCase.objects.filter(project__in=accessible_projects).select_related(
+            'project', 'group', 'created_by'
+        ).prefetch_related('steps__file_assets')
 
-    def get_queryset(self):
-        # 只显示用户有权限访问的项目的测试用例
-        user = self.request.user
-        accessible_projects = UiProject.objects.filter(
-            models.Q(owner=user) | models.Q(members=user)
-        ).distinct()
-        return TestCase.objects.filter(project__in=accessible_projects).select_related('project', 'created_by')
-
+    @transaction.atomic
     def perform_create(self, serializer):
         # 创建测试用例
         instance = serializer.save(created_by=self.request.user)
@@ -947,6 +1110,7 @@ class TestCaseViewSet(viewsets.ModelViewSet):
                 step_data = dict(step_data)  # 创建副本避免修改原数据
                 step_data['test_case'] = instance.id  # 使用测试用例ID
                 step_data['step_number'] = i + 1  # 确保步骤序号正确
+                self._validate_upload_step(instance, step_data)
 
                 # 处理元素ID
                 if 'element_id' in step_data:
@@ -961,17 +1125,7 @@ class TestCaseViewSet(viewsets.ModelViewSet):
 
                 # 使用模型直接创建，避免序列化器的复杂性
                 try:
-                    TestCaseStep.objects.create(
-                        test_case=instance,
-                        step_number=step_data.get('step_number', i + 1),
-                        action_type=step_data.get('action_type', 'click'),
-                        element_id=step_data.get('element') if step_data.get('element') else None,
-                        input_value=step_data.get('input_value', ''),
-                        wait_time=step_data.get('wait_time', 1000),
-                        assert_type=step_data.get('assert_type', ''),
-                        assert_value=step_data.get('assert_value', ''),
-                        description=step_data.get('description', '')
-                    )
+                    self._create_step(instance, step_data, step_data.get('step_number', i + 1))
                     created_count += 1
                 except Exception as e:
                     logger.error(f"创建步骤 {i + 1} 失败: {str(e)}")
@@ -988,18 +1142,22 @@ class TestCaseViewSet(viewsets.ModelViewSet):
             # 1. 复制测试用例基本信息
             new_case = TestCase.objects.create(
                 project=test_case.project,
+                group=test_case.group,
                 name=f"{test_case.name}_copy",
                 description=test_case.description,
                 priority=test_case.priority,
                 status=test_case.status,
+                global_wait_enabled=test_case.global_wait_enabled,
+                global_wait_time=test_case.global_wait_time,
+                data_driven_enabled=test_case.data_driven_enabled,
+                data_rows=test_case.data_rows,
                 created_by=request.user
             )
 
             # 2. 复制测试步骤
-            steps = test_case.steps.all().order_by('step_number')
-            new_steps = []
+            steps = test_case.steps.select_related('file_asset').prefetch_related('file_assets').order_by('step_number')
             for step in steps:
-                new_steps.append(TestCaseStep(
+                new_step = TestCaseStep.objects.create(
                     test_case=new_case,
                     step_number=step.step_number,
                     action_type=step.action_type,
@@ -1008,11 +1166,11 @@ class TestCaseViewSet(viewsets.ModelViewSet):
                     wait_time=step.wait_time,
                     assert_type=step.assert_type,
                     assert_value=step.assert_value,
+                    file_asset=step.file_asset,
+                    file_asset_order=step.file_asset_order,
                     description=step.description
-                ))
-
-            if new_steps:
-                TestCaseStep.objects.bulk_create(new_steps)
+                )
+                new_step.file_assets.set(step.file_assets.all())
 
             # 记录操作
             log_operation('create', 'test_case', new_case.id, new_case.name, request.user)
@@ -1024,6 +1182,7 @@ class TestCaseViewSet(viewsets.ModelViewSet):
             logger.error(f"复制测试用例失败: {str(e)}")
             return Response({'error': f"复制失败: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    @transaction.atomic
     def perform_update(self, serializer):
         # 更新测试用例步骤
         instance = serializer.save()
@@ -1048,6 +1207,7 @@ class TestCaseViewSet(viewsets.ModelViewSet):
                 step_data = dict(step_data)  # 创建副本避免修改原数据
                 step_data['test_case'] = instance.id  # 使用测试用例ID
                 step_data['step_number'] = i + 1  # 确保步骤序号正确
+                self._validate_upload_step(instance, step_data)
 
                 # 处理元素ID
                 if 'element_id' in step_data:
@@ -1062,17 +1222,7 @@ class TestCaseViewSet(viewsets.ModelViewSet):
 
                 # 使用模型直接创建，避免序列化器的复杂性
                 try:
-                    TestCaseStep.objects.create(
-                        test_case=instance,
-                        step_number=step_data.get('step_number', i + 1),
-                        action_type=step_data.get('action_type', 'click'),
-                        element_id=step_data.get('element') if step_data.get('element') else None,
-                        input_value=step_data.get('input_value', ''),
-                        wait_time=step_data.get('wait_time', 1000),
-                        assert_type=step_data.get('assert_type', ''),
-                        assert_value=step_data.get('assert_value', ''),
-                        description=step_data.get('description', '')
-                    )
+                    self._create_step(instance, step_data, step_data.get('step_number', i + 1))
                     created_count += 1
                 except Exception as e:
                     logger.error(f"创建步骤 {i + 1} 失败: {str(e)}")
@@ -1134,6 +1284,15 @@ class TestCaseViewSet(viewsets.ModelViewSet):
                 log_parts.append(f"- 元素在 {execution_time}s 后出现")
             else:
                 log_parts.append(f"- 等待超时 - 元素未在指定时间内出现")
+
+        elif step.action_type == 'waitForEnabled':
+            log_parts.append(f"等待元素 '{element_name}' 可点击")
+            log_parts.append(f"- 使用定位器: {locator_info}")
+            log_parts.append(f"- 超时时间: {step.wait_time / 1000}秒")
+            if step_result == 'success':
+                log_parts.append(f"- 元素在 {execution_time}s 后可点击")
+            else:
+                log_parts.append(f"- 等待超时 - 元素仍处于禁用或不可点击状态")
 
         elif step.action_type == 'hover':
             log_parts.append(f"在元素 '{element_name}' 上悬停")
@@ -1257,6 +1416,17 @@ class TestCaseViewSet(viewsets.ModelViewSet):
     def run(self, request, pk=None):
         """运行单个测试用例 - 支持选择Playwright或Selenium执行引擎"""
         test_case = self.get_object()
+        if test_case.data_driven_enabled or request.data.get('retry_execution_id') is not None:
+            from .data_driven import start_data_execution
+            execution = start_data_execution(
+                test_case, request.user, engine=request.data.get('engine', 'playwright'),
+                browser=request.data.get('browser', 'chrome'),
+                headless=True, request_data=request.data,
+            )
+            return Response({
+                'pending': True, 'execution_id': execution.id,
+                'batch_id': str(execution.batch_id),
+            }, status=status.HTTP_202_ACCEPTED)
 
         try:
             # 获取执行引擎选择，默认使用playwright
@@ -1270,7 +1440,7 @@ class TestCaseViewSet(viewsets.ModelViewSet):
                 status='running',
                 engine=engine_type,
                 browser=request.data.get('browser', 'chrome'),
-                headless=request.data.get('headless', False),
+                headless=True,
                 created_by=request.user,
                 started_at=timezone.now()
             )
@@ -1349,7 +1519,9 @@ class TestCaseViewSet(viewsets.ModelViewSet):
             start_time = time.time()
 
             # 获取测试用例的所有步骤
-            test_steps = list(test_case.steps.all().order_by('step_number'))
+            test_steps = list(test_case.steps.select_related(
+                'element', 'element__locator_strategy', 'file_asset'
+            ).prefetch_related('file_assets').order_by('step_number'))
 
             # 预先获取所有步骤的数据,避免在异步上下文中访问ORM
             steps_data = []
@@ -1387,11 +1559,13 @@ class TestCaseViewSet(viewsets.ModelViewSet):
             execution_logs.append(f"执行时间: {timezone.now().strftime('%Y-%m-%d %H:%M:%S')}")
             execution_logs.append(f"执行引擎: {engine_type.upper()}")
             execution_logs.append(f"浏览器: {request.data.get('browser', 'chrome').capitalize()}")
-            headless_mode = request.data.get('headless', False)
+            headless_mode = True
             mode_text = "无头模式" if headless_mode else "有头模式"
             execution_logs.append(f"执行模式: {mode_text}")
             execution_logs.append(f"执行用户: {request.user.username}")
             execution_logs.append(f"项目基础URL: {test_case.project.base_url}")
+            if test_case.global_wait_enabled:
+                execution_logs.append(f"步骤间全局等待: {test_case.global_wait_time} 毫秒")
             execution_logs.append("")
 
             # 截图列表
@@ -1406,7 +1580,7 @@ class TestCaseViewSet(viewsets.ModelViewSet):
                 def run_test_selenium():
                     """使用Selenium执行测试"""
                     browser_type = request.data.get('browser', 'chrome')
-                    headless = request.data.get('headless', False)
+                    headless = True
 
                     # 创建Selenium引擎实例
                     engine = SeleniumTestEngine(browser_type=browser_type, headless=headless)
@@ -1536,6 +1710,10 @@ class TestCaseViewSet(viewsets.ModelViewSet):
                                             # 移除 loaded 和 error 字段，让前端自行处理
                                         })
 
+                                    if test_case.global_wait_enabled and i < step_count:
+                                        execution_logs.append(f"  ⏱ 步骤间等待 {test_case.global_wait_time} 毫秒")
+                                        time.sleep(test_case.global_wait_time / 1000)
+
                                 except Exception as e:
                                     execution_logs.append(f"  ✗ 步骤执行异常: {str(e)}")
                                     import traceback
@@ -1612,7 +1790,7 @@ class TestCaseViewSet(viewsets.ModelViewSet):
                             'edge': 'chromium'
                         }
                         browser_type = browser_map.get(request.data.get('browser', 'chrome'), 'chromium')
-                        headless = request.data.get('headless', False)
+                        headless = True
 
                         # 创建Playwright引擎实例
                         engine = PlaywrightTestEngine(browser_type=browser_type, headless=headless)
@@ -1724,6 +1902,10 @@ class TestCaseViewSet(viewsets.ModelViewSet):
 
                                             execution_logs.append(f"  [调试] 步骤失败,准备退出执行...")
                                             return False
+
+                                        if test_case.global_wait_enabled and i < step_count:
+                                            execution_logs.append(f"  ⏱ 步骤间等待 {test_case.global_wait_time} 毫秒")
+                                            await asyncio.sleep(test_case.global_wait_time / 1000)
 
                                         # 如果是截图步骤且成功,也保存截图
                                         if action_type == 'screenshot' and screenshot_base64:
@@ -2138,7 +2320,7 @@ class UiScheduledTaskViewSet(viewsets.ModelViewSet):
                             test_suite=test_suite,
                             engine=task.engine,
                             browser=task.browser,
-                            headless=task.headless,
+                            headless=True,
                             executed_by=task.created_by
                         )
                         executor.run()
@@ -2178,7 +2360,7 @@ class UiScheduledTaskViewSet(viewsets.ModelViewSet):
                     'test_case_count': test_case_count,
                     'engine': task.engine,
                     'browser': task.browser,
-                    'headless': task.headless
+                    'headless': True
                 }, status=status.HTTP_200_OK)
 
             elif task.task_type == 'TEST_CASE':
@@ -2216,6 +2398,15 @@ class UiScheduledTaskViewSet(viewsets.ModelViewSet):
 
                     try:
                         for test_case in test_cases:
+                            if test_case.data_driven_enabled:
+                                from .data_driven import execute_rows
+                                row_executions = execute_rows(
+                                    test_case, task.created_by, engine=task.engine,
+                                    browser=task.browser, headless=True, source='scheduled',
+                                )
+                                success_count += sum(item.status == 'passed' for item in row_executions)
+                                failed_count += sum(item.status != 'passed' for item in row_executions)
+                                continue
                             # 创建执行记录
                             execution = TestCaseExecution.objects.create(
                                 test_case=test_case,
@@ -2224,7 +2415,7 @@ class UiScheduledTaskViewSet(viewsets.ModelViewSet):
                                 status='running',
                                 engine=task.engine,
                                 browser=task.browser,
-                                headless=task.headless,
+                                headless=True,
                                 created_by=task.created_by,
                                 started_at=timezone.now()
                             )
@@ -2236,7 +2427,9 @@ class UiScheduledTaskViewSet(viewsets.ModelViewSet):
                                 start_time = time.time()
 
                                 # 获取测试用例的所有步骤
-                                test_steps = list(test_case.steps.all().order_by('step_number'))
+                                test_steps = list(test_case.steps.select_related(
+                                    'element', 'element__locator_strategy', 'file_asset'
+                                ).prefetch_related('file_assets').order_by('step_number'))
 
                                 # 预先获取所有步骤的数据
                                 steps_data = []
@@ -2292,7 +2485,7 @@ class UiScheduledTaskViewSet(viewsets.ModelViewSet):
                                         continue
 
                                     # 创建Selenium引擎实例并执行
-                                    engine = SeleniumTestEngine(browser_type=task.browser, headless=task.headless)
+                                    engine = SeleniumTestEngine(browser_type=task.browser, headless=True)
 
                                     try:
                                         # 启动浏览器
@@ -2350,6 +2543,9 @@ class UiScheduledTaskViewSet(viewsets.ModelViewSet):
                                                     'timestamp': timezone.now().isoformat()
                                                 })
 
+                                            if test_case.global_wait_enabled and i < len(steps_data):
+                                                time.sleep(test_case.global_wait_time / 1000)
+
                                     finally:
                                         engine.stop()
 
@@ -2367,7 +2563,7 @@ class UiScheduledTaskViewSet(viewsets.ModelViewSet):
                                         }
                                         browser_type = browser_map.get(task.browser, 'chromium')
 
-                                        engine = PlaywrightTestEngine(browser_type=browser_type, headless=task.headless)
+                                        engine = PlaywrightTestEngine(browser_type=browser_type, headless=True)
 
                                         try:
                                             # 启动浏览器
@@ -2427,6 +2623,9 @@ class UiScheduledTaskViewSet(viewsets.ModelViewSet):
                                                         'step_number': i,
                                                         'timestamp': timezone.now().isoformat()
                                                     })
+
+                                                if test_case.global_wait_enabled and i < len(steps_data):
+                                                    await asyncio.sleep(test_case.global_wait_time / 1000)
 
                                             return True
 
@@ -2520,7 +2719,7 @@ class UiScheduledTaskViewSet(viewsets.ModelViewSet):
                     'test_case_count': test_case_count,
                     'engine': task.engine,
                     'browser': task.browser,
-                    'headless': task.headless
+                    'headless': True
                 }, status=status.HTTP_200_OK)
 
             else:

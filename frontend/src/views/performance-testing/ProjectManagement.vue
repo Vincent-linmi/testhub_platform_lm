@@ -108,7 +108,6 @@ const saving = ref(false)
 const editingId = ref(null)
 const form = ref({ name: '', description: '', status: 'IN_PROGRESS', member_ids: [] })
 
-const dialogTitle_ = computed(() => dialogTitle.value)
 
 async function load() {
   loading.value = true
@@ -202,8 +201,6 @@ async function loadUsers() {
 }
 
 onMounted(() => { load(); loadUsers() })
-// 暴露给模板（避免未使用告警）
-void dialogTitle_
 </script>
 
 <style lang="scss" scoped>

@@ -67,129 +67,21 @@
       <p class="subtitle">{{ $t('home.subtitle') }}</p>
 
       <div class="cards-container">
-        <!-- AI用例生成 -->
-        <div class="nav-card" @click="handleNavigate('ai')" role="button" tabindex="0">
-          <div class="card-icon ai-icon">
-            <el-icon><MagicStick /></el-icon>
+        <router-link
+          v-for="card in moduleCards"
+          :key="card.id"
+          :to="card.path"
+          target="_blank"
+          rel="noopener"
+          class="nav-card"
+          @click="trackModuleNavigation(card)"
+        >
+          <div class="card-icon" :class="card.iconClass">
+            <el-icon><component :is="card.icon" /></el-icon>
           </div>
-          <h3>{{ $t('home.aiCaseGeneration') }}</h3>
-          <p>{{ $t('home.aiCaseGenerationDesc') }}</p>
-        </div>
-
-        <!-- 接口测试 -->
-        <div class="nav-card" @click="handleNavigate('api')" role="button" tabindex="0">
-          <div class="card-icon api-icon">
-            <el-icon><Link /></el-icon>
-          </div>
-          <h3>{{ $t('home.apiTesting') }}</h3>
-          <p>{{ $t('home.apiTestingDesc') }}</p>
-        </div>
-
-        <!-- UI自动化测试 -->
-        <div class="nav-card" @click="handleNavigate('ui')" role="button" tabindex="0">
-          <div class="card-icon ui-icon">
-            <el-icon><Monitor /></el-icon>
-          </div>
-          <h3>{{ $t('home.uiAutomation') }}</h3>
-          <p>{{ $t('home.uiAutomationDesc') }}</p>
-        </div>
-
-        <!-- Bug缺陷管理 -->
-        <div class="nav-card" @click="handleNavigate('defects')" role="button" tabindex="0">
-          <div class="card-icon defects-icon">
-            <el-icon><Tickets /></el-icon>
-          </div>
-          <h3>{{ $t('home.defectManagement') }}</h3>
-          <p>{{ $t('home.defectManagementDesc') }}</p>
-        </div>
-
-        <!-- 数据工厂 -->
-        <div class="nav-card" @click="handleNavigate('data')" role="button" tabindex="0">
-          <div class="card-icon data-icon">
-            <el-icon><DataLine /></el-icon>
-          </div>
-          <h3>{{ $t('home.dataFactory') }}</h3>
-          <p>{{ $t('home.dataFactoryDesc') }}</p>
-        </div>
-
-        <!-- APP自动化测试 -->
-        <div class="nav-card" @click="handleNavigate('app')" role="button" tabindex="0">
-          <div class="card-icon app-icon">
-            <el-icon><Cellphone /></el-icon>
-          </div>
-          <h3>{{ $t('home.appAutomation') }}</h3>
-          <p>{{ $t('home.appAutomationDesc') }}</p>
-        </div>
-
-        <!-- AI 智能模式 -->
-        <div class="nav-card" @click="handleNavigate('ai-intelligent')" role="button" tabindex="0">
-          <div class="card-icon ai-intelligent-icon">
-            <el-icon><Cpu /></el-icon>
-          </div>
-          <h3>{{ $t('home.aiIntelligentMode') }}</h3>
-          <p>{{ $t('home.aiIntelligentModeDesc') }}</p>
-        </div>
-        <!-- AI评测师 -->
-        <div class="nav-card" @click="handleNavigate('assistant')" role="button" tabindex="0">
-          <div class="card-icon assistant-icon">
-            <el-icon><ChatDotRound /></el-icon>
-          </div>
-          <h3>{{ $t('home.aiEvaluator') }}</h3>
-          <p>{{ $t('home.aiEvaluatorDesc') }}</p>
-        </div>
-        <!-- 配置中心 -->
-        <div class="nav-card" @click="handleNavigate('config')" role="button" tabindex="0">
-          <div class="card-icon config-icon">
-            <el-icon><Setting /></el-icon>
-          </div>
-          <h3>{{ $t('home.configCenter') }}</h3>
-          <p>{{ $t('home.configCenterDesc') }}</p>
-        </div>
-
-        <!-- 智能评分器 -->
-        <div class="nav-card" @click="handleNavigate('judge')" role="button" tabindex="0">
-          <div class="card-icon judge-icon">
-            <el-icon><Select /></el-icon>
-          </div>
-          <h3>{{ $t('llmJudge.title') }}</h3>
-          <p>{{ $t('llmJudge.subtitle') }}</p>
-        </div>
-
-        <!-- 性能测试 -->
-        <div class="nav-card" @click="handleNavigate('performance')" role="button" tabindex="0">
-          <div class="card-icon perf-icon">
-            <el-icon><Odometer /></el-icon>
-          </div>
-          <h3>{{ $t('home.performanceTesting') }}</h3>
-          <p>{{ $t('home.performanceTestingDesc') }}</p>
-        </div>
-
-        <!-- 监控中心 -->
-        <div class="nav-card" @click="handleNavigate('monitor')" role="button" tabindex="0">
-          <div class="card-icon monitor-icon">
-            <el-icon><Odometer /></el-icon>
-          </div>
-          <h3>{{ $t('home.monitorCenter') }}</h3>
-          <p>{{ $t('home.monitorCenterDesc') }}</p>
-        </div>
-
-        <!-- MCP 管理端 -->
-        <div class="nav-card" @click="handleNavigate('mcp')" role="button" tabindex="0">
-          <div class="card-icon mcp-icon">
-            <el-icon><Connection /></el-icon>
-          </div>
-          <h3>{{ $t('home.mcpConsole') }}</h3>
-          <p>{{ $t('home.mcpConsoleDesc') }}</p>
-        </div>
-
-        <!-- 文档中心 -->
-        <div class="nav-card" @click="handleNavigate('docs')" role="button" tabindex="0">
-          <div class="card-icon docs-icon">
-            <el-icon><Document /></el-icon>
-          </div>
-          <h3>{{ $t('home.docsCenter') }}</h3>
-          <p>{{ $t('home.docsCenterDesc') }}</p>
-        </div>
+          <h3>{{ $t(card.title) }}</h3>
+          <p>{{ $t(card.description) }}</p>
+        </router-link>
       </div>
     </div>
 
@@ -307,37 +199,28 @@ const handleLogout = () => {
   }).catch(() => {})
 }
 
-const handleNavigate = (type) => {
-  const routes = {
-    'ai': '/ai-generation/requirement-analysis',
-    'api': '/api-testing/dashboard',
-    'ui': '/ui-automation/dashboard',
-    'defects': '/defects/dashboard',
-    'app': '/app-automation/dashboard',
-    'ai-intelligent': '/ai-intelligent-mode/testing',
-    'assistant': '/ai-generation/assistant',
-    'config': '/configuration/ai-model',
-    'judge': '/llm-judge/dashboard',
-    'data': '/data-factory',
-    'performance': '/performance-testing/dashboard',
-    'monitor': '/monitor/dashboard',
-    'mcp': '/mcp/console',
-    'docs': '/docs-center'
-  }
+const moduleCards = [
+  { id: 'ai', path: '/ai-generation/requirement-analysis', icon: MagicStick, iconClass: 'ai-icon', title: 'home.aiCaseGeneration', description: 'home.aiCaseGenerationDesc' },
+  { id: 'api', path: '/api-testing/dashboard', icon: Link, iconClass: 'api-icon', title: 'home.apiTesting', description: 'home.apiTestingDesc' },
+  { id: 'ui', path: '/ui-automation/dashboard', icon: Monitor, iconClass: 'ui-icon', title: 'home.uiAutomation', description: 'home.uiAutomationDesc' },
+  { id: 'defects', path: '/defects/dashboard', icon: Tickets, iconClass: 'defects-icon', title: 'home.defectManagement', description: 'home.defectManagementDesc' },
+  { id: 'data', path: '/data-factory', icon: DataLine, iconClass: 'data-icon', title: 'home.dataFactory', description: 'home.dataFactoryDesc' },
+  { id: 'app', path: '/app-automation/dashboard', icon: Cellphone, iconClass: 'app-icon', title: 'home.appAutomation', description: 'home.appAutomationDesc' },
+  { id: 'ai-intelligent', path: '/ai-intelligent-mode/testing', icon: Cpu, iconClass: 'ai-intelligent-icon', title: 'home.aiIntelligentMode', description: 'home.aiIntelligentModeDesc' },
+  { id: 'assistant', path: '/ai-generation/assistant', icon: ChatDotRound, iconClass: 'assistant-icon', title: 'home.aiEvaluator', description: 'home.aiEvaluatorDesc' },
+  { id: 'config', path: '/configuration/ai-model', icon: Setting, iconClass: 'config-icon', title: 'home.configCenter', description: 'home.configCenterDesc' },
+  { id: 'judge', path: '/llm-judge/dashboard', icon: Select, iconClass: 'judge-icon', title: 'llmJudge.title', description: 'llmJudge.subtitle' },
+  { id: 'performance', path: '/performance-testing/dashboard', icon: Odometer, iconClass: 'perf-icon', title: 'home.performanceTesting', description: 'home.performanceTestingDesc' },
+  { id: 'monitor', path: '/monitor/dashboard', icon: Odometer, iconClass: 'monitor-icon', title: 'home.monitorCenter', description: 'home.monitorCenterDesc' },
+  { id: 'mcp', path: '/mcp/console', icon: Connection, iconClass: 'mcp-icon', title: 'home.mcpConsole', description: 'home.mcpConsoleDesc' },
+  { id: 'docs', path: '/docs-center', icon: Document, iconClass: 'docs-icon', title: 'home.docsCenter', description: 'home.docsCenterDesc' },
+]
 
-  if (routes[type]) {
-    track('module_card_click', {
-      event_type: 'click',
-      module: 'home',
-      page_path: '/home',
-      target_path: routes[type],
-      metadata: {
-        card_type: type
-      }
-    })
-    const routeData = router.resolve({ path: routes[type] })
-    window.open(routeData.href, '_blank')
-  }
+const trackModuleNavigation = (card) => {
+  track('module_card_click', {
+    event_type: 'click', module: 'home', page_path: '/home',
+    target_path: card.path, metadata: { card_type: card.id }
+  })
 }
 </script>
 
@@ -509,6 +392,7 @@ const handleNavigate = (type) => {
 }
 
 .nav-card {
+  text-decoration: none;
   position: relative;
   overflow: hidden;
   min-height: 216px;

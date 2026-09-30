@@ -4,6 +4,38 @@ from apps.users.models import User
 from apps.projects.models import Project
 from apps.versions.models import Version
 
+
+class TestCaseGroup(models.Model):
+    """项目内的测试用例分组。"""
+
+    project = models.ForeignKey(
+        Project,
+        on_delete=models.CASCADE,
+        related_name='testcase_groups',
+        verbose_name='归属项目',
+    )
+    name = models.CharField(max_length=100, verbose_name='分组名称')
+    description = models.CharField(max_length=500, blank=True, verbose_name='分组描述')
+    order = models.PositiveIntegerField(default=0, verbose_name='排序')
+    created_at = models.DateTimeField(default=timezone.now, verbose_name='创建时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+
+    def __str__(self):
+        return self.name
+
+    class Meta:
+        db_table = 'testcase_groups'
+        verbose_name = '测试用例分组'
+        verbose_name_plural = '测试用例分组'
+        ordering = ['order', 'created_at']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['project', 'name'],
+                name='unique_testcase_group_name_per_project',
+            ),
+        ]
+
+
 class TestCase(models.Model):
     """测试用例模型"""
     PRIORITY_CHOICES = [
@@ -29,6 +61,14 @@ class TestCase(models.Model):
     ]
     
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name='testcases')
+    group = models.ForeignKey(
+        TestCaseGroup,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='testcases',
+        verbose_name='用例分组',
+    )
     versions = models.ManyToManyField(Version, blank=True, related_name='testcases', verbose_name='关联版本')
     title = models.CharField(max_length=500, verbose_name='用例标题')
     description = models.TextField(blank=True, verbose_name='用例描述')

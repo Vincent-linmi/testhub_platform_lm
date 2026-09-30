@@ -257,7 +257,7 @@
         </el-form-item>
 
         <el-form-item :label="$t('uiAutomation.scheduledTask.runMode')">
-          <el-checkbox v-model="taskForm.headless">{{ $t('uiAutomation.scheduledTask.headlessMode') }}</el-checkbox>
+          <el-checkbox :model-value="true" disabled>{{ $t('uiAutomation.scheduledTask.headlessMode') }}</el-checkbox>
         </el-form-item>
 
         <el-form-item :label="$t('uiAutomation.scheduledTask.notificationSettings')">
@@ -360,7 +360,7 @@ const taskForm = reactive({
   test_cases: [],
   engine: 'playwright',
   browser: 'chrome',
-  headless: false,
+  headless: true,
   notify_on_success: false,
   notify_on_failure: false,
   notification_type: '',
@@ -494,7 +494,7 @@ const resetTaskForm = () => {
     test_cases: [],
     engine: 'playwright',
     browser: 'chrome',
-    headless: false,
+    headless: true,
     notify_on_success: false,
     notify_on_failure: false,
     notification_type: '',
@@ -524,7 +524,7 @@ const submitTaskForm = async () => {
       trigger_type: taskForm.trigger_type,
       engine: taskForm.engine,
       browser: taskForm.browser,
-      headless: taskForm.headless,
+      headless: true,
       notify_on_success: taskForm.notify_on_success,
       notify_on_failure: taskForm.notify_on_failure
     }
@@ -652,7 +652,7 @@ const editTask = async (task) => {
     test_cases: task.test_cases || [],
     engine: task.engine || 'playwright',
     browser: task.browser || 'chrome',
-    headless: task.headless || false,
+    headless: true,
     notify_on_success: task.notify_on_success || false,
     notify_on_failure: task.notify_on_failure || false,
     notification_type: task.notification_type || '',

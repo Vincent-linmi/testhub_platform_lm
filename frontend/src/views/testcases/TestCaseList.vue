@@ -1,8 +1,13 @@
 <template>
-  <div class="page-container">
-    <div class="page-header">
-      <h1 class="page-title">{{ $t('testcase.title') }}</h1>
+  <div class="page-container th-list-page">
+    <PageHeader :title="$t('testcase.title')">
       <div class="header-actions">
+        <el-button
+          v-if="selectedTestCases.length > 0"
+          @click="openMoveGroupDialog">
+          <el-icon><FolderOpened /></el-icon>
+          {{ $t('testcase.moveToGroup') }} ({{ selectedTestCases.length }})
+        </el-button>
         <el-button
           v-if="selectedTestCases.length > 0"
           type="danger"
@@ -11,7 +16,7 @@
           <el-icon><Delete /></el-icon>
           {{ $t('testcase.batchDelete') }} ({{ selectedTestCases.length }})
         </el-button>
-        <el-button type="success" @click="exportToExcel">
+        <el-button :loading="exporting" @click="exportToExcel">
           <el-icon><Download /></el-icon>
           {{ $t('testcase.exportExcel') }}
         </el-button>
@@ -19,62 +24,74 @@
           <el-icon><Download /></el-icon>
           {{ $t('testcase.downloadImportTemplate') }}
         </el-button>
-        <el-button type="warning" @click="openImportDialog">
+        <el-button @click="openImportDialog">
           <el-icon><Upload /></el-icon>
           {{ $t('testcase.importCases') }}
         </el-button>
         <el-button @click="goToImportRecords">
           {{ $t('testcase.importRecords') }}
         </el-button>
+        <el-button @click="openGroupDialog">
+          <el-icon><Folder /></el-icon>
+          {{ $t('testcase.manageGroups') }}
+        </el-button>
         <el-button type="primary" @click="$router.push('/ai-generation/testcases/create')">
           <el-icon><Plus /></el-icon>
           {{ $t('testcase.newCase') }}
         </el-button>
       </div>
-    </div>
+    </PageHeader>
     
     <div class="card-container">
-      <div class="filter-bar">
-        <el-row :gutter="20">
-          <el-col :span="5">
-            <el-input
-              v-model="searchText"
-              :placeholder="$t('testcase.searchPlaceholder')"
-              clearable
-              @input="handleSearch"
-            >
-              <template #prefix>
-                <el-icon><Search /></el-icon>
-              </template>
-            </el-input>
-          </el-col>
-          <el-col :span="4">
-            <el-select v-model="projectFilter" :placeholder="$t('testcase.relatedProject')" clearable @change="handleFilter">
-              <el-option
-                v-for="project in projects"
-                :key="project.id"
-                :label="project.name"
-                :value="project.id"
-              />
-            </el-select>
-          </el-col>
-          <el-col :span="3">
-            <el-select v-model="priorityFilter" :placeholder="$t('testcase.priorityFilter')" clearable @change="handleFilter">
-              <el-option :label="$t('testcase.low')" value="low" />
-              <el-option :label="$t('testcase.medium')" value="medium" />
-              <el-option :label="$t('testcase.high')" value="high" />
-              <el-option :label="$t('testcase.critical')" value="critical" />
-            </el-select>
-          </el-col>
-        </el-row>
+      <div class="list-toolbar">
+        <el-input
+          v-model="searchText"
+          :placeholder="$t('testcase.searchPlaceholder')" :aria-label="$t('testcase.searchPlaceholder')"
+          clearable
+          @input="handleSearch"
+          @keyup.enter="handleFilter"
+        >
+          <template #prefix>
+            <el-icon><Search /></el-icon>
+          </template>
+        </el-input>
+        <el-select v-model="projectFilter" :placeholder="$t('testcase.relatedProject')" :aria-label="$t('testcase.relatedProject')" clearable @change="handleProjectFilter">
+          <el-option
+            v-for="project in projects"
+            :key="project.id"
+            :label="project.name"
+            :value="project.id"
+          />
+        </el-select>
+        <el-select v-model="groupFilter" :placeholder="$t('testcase.groupFilter')" :aria-label="$t('testcase.groupFilter')" clearable @change="handleFilter">
+          <el-option :label="$t('testcase.ungrouped')" value="ungrouped" />
+          <el-option
+            v-for="group in filterGroups"
+            :key="group.id"
+            :label="projectFilter ? group.name : `${group.project_name} / ${group.name}`"
+            :value="group.id"
+          />
+        </el-select>
+        <el-select v-model="priorityFilter" :placeholder="$t('testcase.priorityFilter')" :aria-label="$t('testcase.priorityFilter')" clearable @change="handleFilter">
+          <el-option :label="$t('testcase.low')" value="low" />
+          <el-option :label="$t('testcase.medium')" value="medium" />
+          <el-option :label="$t('testcase.high')" value="high" />
+          <el-option :label="$t('testcase.critical')" value="critical" />
+        </el-select>
+
+        <el-button @click="resetFilters">{{ $t('common.resetFilters') }}</el-button>
       </div>
       
+      <el-alert v-if="listError" type="error" :closable="false" show-icon class="list-error" :title="$t('testcase.fetchListFailed')">
+        <el-button link type="primary" @click="fetchTestCases">{{ $t('common.retry') }}</el-button>
+      </el-alert>
       <div class="table-container">
         <el-table 
-          :data="testcases" 
-          v-loading="loading" 
+          :data="testcases"
+          row-key="id"
+          v-loading="loading" :empty-text="listError ? $t('common.loadFailed') : $t('common.noResults')"
           style="width: 100%"
-          height="100%"
+          :max-height="isMobile ? undefined : 'max(240px, calc(100dvh - 320px))'"
           @selection-change="handleSelectionChange">
           <el-table-column type="selection" width="55" />
           <el-table-column type="index" :label="$t('testcase.serialNumber')" width="80" :index="getSerialNumber" />
@@ -88,6 +105,12 @@
           <el-table-column prop="project.name" :label="$t('testcase.relatedProject')" width="150">
             <template #default="{ row }">
               {{ row.project?.name || '-' }}
+            </template>
+          </el-table-column>
+          <el-table-column prop="group.name" :label="$t('testcase.group')" width="150">
+            <template #default="{ row }">
+              <el-tag v-if="row.group" size="small" type="info">{{ row.group.name }}</el-tag>
+              <span v-else class="no-version">{{ $t('testcase.ungrouped') }}</span>
             </template>
           </el-table-column>
           <el-table-column prop="versions" :label="$t('testcase.relatedVersions')" width="200">
@@ -127,10 +150,10 @@
               {{ formatDate(row.created_at) }}
             </template>
           </el-table-column>
-          <el-table-column :label="$t('project.actions')" width="150" fixed="right">
+          <el-table-column :label="$t('project.actions')" width="150" :fixed="isMobile ? false : 'right'">
             <template #default="{ row }">
-              <el-button size="small" @click="editTestCase(row)">{{ $t('common.edit') }}</el-button>
-              <el-button size="small" type="danger" @click="deleteTestCase(row)">{{ $t('common.delete') }}</el-button>
+              <el-button link type="primary" size="small" @click="editTestCase(row)">{{ $t('common.edit') }}</el-button>
+              <el-button link size="small" type="danger" @click="deleteTestCase(row)">{{ $t('common.delete') }}</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -138,16 +161,78 @@
       
       <div class="pagination-container">
         <el-pagination
-          v-model:current-page="currentPage"
-          v-model:page-size="pageSize"
+          :current-page="currentPage"
+          :page-size="pageSize"
           :page-sizes="[15, 25, 35, 50, 100]"
           :total="total"
-          layout="total, sizes, prev, pager, next"
+          :layout="isMobile ? 'total, prev, pager, next' : 'total, sizes, prev, pager, next'"
+          :pager-count="5"
           @current-change="handlePageChange"
           @size-change="handleSizeChange"
         />
       </div>
     </div>
+
+    <el-dialog
+      v-model="groupDialogVisible"
+      :title="$t('testcase.manageGroups')"
+      width="680px"
+    >
+      <div class="group-dialog-toolbar">
+        <el-select
+          v-model="manageProjectId"
+          :placeholder="$t('testcase.selectProjectForGroup')"
+          filterable
+        >
+          <el-option
+            v-for="project in projects"
+            :key="project.id"
+            :label="project.name"
+            :value="project.id"
+          />
+        </el-select>
+        <el-button type="primary" :disabled="!manageProjectId" @click="createGroup">
+          <el-icon><Plus /></el-icon>
+          {{ $t('testcase.newGroup') }}
+        </el-button>
+      </div>
+      <el-table :data="managedGroups" max-height="420" :empty-text="$t('testcase.noGroups')">
+        <el-table-column prop="name" :label="$t('testcase.groupName')" min-width="220" />
+        <el-table-column prop="testcase_count" :label="$t('testcase.caseCount')" width="110" />
+        <el-table-column :label="$t('project.actions')" width="150" align="right">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="renameGroup(row)">{{ $t('common.edit') }}</el-button>
+            <el-button link type="danger" @click="deleteGroup(row)">{{ $t('common.delete') }}</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
+
+    <el-dialog
+      v-model="moveGroupDialogVisible"
+      :title="$t('testcase.moveToGroup')"
+      width="460px"
+    >
+      <el-form label-width="100px">
+        <el-form-item :label="$t('testcase.targetGroup')">
+          <el-select v-model="moveGroupId" style="width: 100%" :placeholder="$t('testcase.selectTargetGroup')" clearable>
+            <el-option :label="$t('testcase.ungrouped')" :value="null" />
+            <el-option
+              v-for="group in moveTargetGroups"
+              :key="group.id"
+              :label="group.name"
+              :value="group.id"
+            />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="moveGroupDialogVisible = false">{{ $t('common.cancel') }}</el-button>
+        <el-button type="primary" :loading="isMovingGroup" @click="moveSelectedToGroup">
+          {{ $t('common.confirm') }}
+        </el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog
       v-model="importDialogVisible"
@@ -167,7 +252,7 @@
           <el-select
             v-model="importForm.projectId"
             style="width: 100%"
-            :placeholder="$t('testcase.selectImportProject')"
+            :placeholder="$t('testcase.selectImportProject')" :aria-label="$t('testcase.selectImportProject')"
             filterable
           >
             <el-option
@@ -217,28 +302,39 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Plus, Search, Download, Delete, Upload } from '@element-plus/icons-vue'
+import { Plus, Search, Download, Delete, Upload, Folder, FolderOpened } from '@element-plus/icons-vue'
+import PageHeader from '@/components/PageHeader.vue'
+import { useListRequest } from '@/composables/useListRequest'
+import { useMediaQuery } from '@/composables/useMediaQuery'
 import api from '@/utils/api'
 import dayjs from 'dayjs'
-import * as XLSX from 'xlsx'
 
 const { t } = useI18n()
 const router = useRouter()
-const loading = ref(false)
+const isMobile = useMediaQuery('(max-width: 768px)')
 const testcases = ref([])
 const projects = ref([])
+const groups = ref([])
 const currentPage = ref(1)
 const pageSize = ref(15)
 const total = ref(0)
 const searchText = ref('')
 const projectFilter = ref('')
+const groupFilter = ref('')
 const priorityFilter = ref('')
 const selectedTestCases = ref([])
 const isDeleting = ref(false)
+const isMovingGroup = ref(false)
+const groupDialogVisible = ref(false)
+const moveGroupDialogVisible = ref(false)
+const manageProjectId = ref('')
+const moveProjectId = ref('')
+const moveGroupId = ref(null)
+const exporting = ref(false)
 const importDialogVisible = ref(false)
 const isCreatingImport = ref(false)
 const selectedImportFile = ref(null)
@@ -246,43 +342,46 @@ const importForm = ref({
   projectId: ''
 })
 
-const fetchTestCases = async () => {
-  loading.value = true
-  try {
-    const params = {
-      page: currentPage.value,
-      page_size: pageSize.value,
-      search: searchText.value,
-      project: projectFilter.value,
-      priority: priorityFilter.value
-    }
-    const response = await api.get('/testcases/', { params })
+const { loading, error: listError, load: fetchTestCases, schedule: scheduleSearch } = useListRequest(
+  (signal) => api.get('/testcases/', { signal, params: {
+    page: currentPage.value, page_size: pageSize.value, search: searchText.value,
+    project: projectFilter.value, group: groupFilter.value, priority: priorityFilter.value
+  } }),
+  (response) => {
     testcases.value = response.data.results || []
     total.value = response.data.count || 0
-  } catch (error) {
-    ElMessage.error(t('testcase.fetchListFailed'))
-  } finally {
-    loading.value = false
   }
-}
+)
 
-const handleSearch = () => {
-  currentPage.value = 1
+const handleSearch = () => { currentPage.value = 1; scheduleSearch() }
+const handleFilter = () => { currentPage.value = 1; fetchTestCases() }
+const filterGroups = computed(() => projectFilter.value
+  ? groups.value.filter(group => group.project_id === projectFilter.value)
+  : groups.value)
+const managedGroups = computed(() => groups.value.filter(group => group.project_id === manageProjectId.value))
+const moveTargetGroups = computed(() => groups.value.filter(group => group.project_id === moveProjectId.value))
+const handleProjectFilter = () => {
+  if (groupFilter.value !== 'ungrouped' && !filterGroups.value.some(group => group.id === groupFilter.value)) {
+    groupFilter.value = ''
+  }
+  handleFilter()
+}
+const handlePageChange = (page) => {
+  if (page === currentPage.value) return
+  currentPage.value = page
   fetchTestCases()
 }
-
-const handleFilter = () => {
-  currentPage.value = 1
-  fetchTestCases()
+const handleSizeChange = (size) => {
+  if (size === pageSize.value) return
+  pageSize.value = size
+  handleFilter()
 }
-
-const handlePageChange = () => {
-  fetchTestCases()
-}
-
-const handleSizeChange = () => {
-  currentPage.value = 1
-  fetchTestCases()
+const resetFilters = () => {
+  searchText.value = ''
+  projectFilter.value = ''
+  groupFilter.value = ''
+  priorityFilter.value = ''
+  handleFilter()
 }
 
 const goToTestCase = (id) => {
@@ -314,6 +413,123 @@ const deleteTestCase = async (testcase) => {
 // 处理选择变化
 const handleSelectionChange = (selection) => {
   selectedTestCases.value = selection
+}
+
+const getErrorMessage = (error, fallbackKey) => {
+  const data = error.response?.data
+  if (typeof data === 'string') return data
+  if (data && typeof data === 'object') {
+    const firstValue = Object.values(data)[0]
+    if (Array.isArray(firstValue)) return firstValue[0]
+    if (firstValue) return firstValue
+  }
+  return t(fallbackKey)
+}
+
+const fetchGroups = async () => {
+  try {
+    const response = await api.get('/testcases/groups/')
+    groups.value = response.data.results || response.data || []
+  } catch (error) {
+    ElMessage.error(t('testcase.fetchGroupsFailed'))
+  }
+}
+
+const openGroupDialog = () => {
+  manageProjectId.value = projectFilter.value || projects.value[0]?.id || ''
+  groupDialogVisible.value = true
+}
+
+const createGroup = async () => {
+  if (!manageProjectId.value) return
+  try {
+    const { value } = await ElMessageBox.prompt(
+      t('testcase.groupNamePlaceholder'),
+      t('testcase.newGroup'),
+      {
+        confirmButtonText: t('common.confirm'),
+        cancelButtonText: t('common.cancel'),
+        inputPattern: /\S+/,
+        inputErrorMessage: t('testcase.groupNameRequired')
+      }
+    )
+    await api.post('/testcases/groups/', { project_id: manageProjectId.value, name: value.trim() })
+    ElMessage.success(t('testcase.groupCreateSuccess'))
+    await fetchGroups()
+  } catch (error) {
+    if (error !== 'cancel') ElMessage.error(getErrorMessage(error, 'testcase.groupCreateFailed'))
+  }
+}
+
+const renameGroup = async (group) => {
+  try {
+    const { value } = await ElMessageBox.prompt(
+      t('testcase.groupNamePlaceholder'),
+      t('testcase.renameGroup'),
+      {
+        inputValue: group.name,
+        confirmButtonText: t('common.confirm'),
+        cancelButtonText: t('common.cancel'),
+        inputPattern: /\S+/,
+        inputErrorMessage: t('testcase.groupNameRequired')
+      }
+    )
+    await api.patch(`/testcases/groups/${group.id}/`, { name: value.trim() })
+    ElMessage.success(t('testcase.groupRenameSuccess'))
+    await Promise.all([fetchGroups(), fetchTestCases()])
+  } catch (error) {
+    if (error !== 'cancel') ElMessage.error(getErrorMessage(error, 'testcase.groupRenameFailed'))
+  }
+}
+
+const deleteGroup = async (group) => {
+  try {
+    await ElMessageBox.confirm(
+      t('testcase.groupDeleteConfirm', { name: group.name, count: group.testcase_count }),
+      t('common.warning'),
+      {
+        confirmButtonText: t('common.confirm'),
+        cancelButtonText: t('common.cancel'),
+        type: 'warning'
+      }
+    )
+    await api.delete(`/testcases/groups/${group.id}/`)
+    if (groupFilter.value === group.id) groupFilter.value = ''
+    ElMessage.success(t('testcase.groupDeleteSuccess'))
+    await Promise.all([fetchGroups(), fetchTestCases()])
+  } catch (error) {
+    if (error !== 'cancel') ElMessage.error(t('testcase.groupDeleteFailed'))
+  }
+}
+
+const openMoveGroupDialog = () => {
+  const projectIds = [...new Set(selectedTestCases.value.map(testcase => testcase.project?.id))]
+  if (projectIds.length !== 1 || !projectIds[0]) {
+    ElMessage.warning(t('testcase.sameProjectRequired'))
+    return
+  }
+  moveProjectId.value = projectIds[0]
+  const currentGroupIds = [...new Set(selectedTestCases.value.map(testcase => testcase.group?.id || null))]
+  moveGroupId.value = currentGroupIds.length === 1 ? currentGroupIds[0] : null
+  moveGroupDialogVisible.value = true
+}
+
+const moveSelectedToGroup = async () => {
+  isMovingGroup.value = true
+  try {
+    const response = await api.post('/testcases/groups/assign/', {
+      testcase_ids: selectedTestCases.value.map(testcase => testcase.id),
+      group_id: moveGroupId.value
+    })
+    ElMessage.success(t('testcase.moveGroupSuccess', { count: response.data.updated_count }))
+    moveGroupDialogVisible.value = false
+    selectedTestCases.value = []
+    await Promise.all([fetchGroups(), fetchTestCases()])
+  } catch (error) {
+    ElMessage.error(getErrorMessage(error, 'testcase.moveGroupFailed'))
+  } finally {
+    isMovingGroup.value = false
+  }
 }
 
 // 获取序号
@@ -416,15 +632,19 @@ const convertBrToNewline = (text) => {
 }
 
 const exportToExcel = async () => {
+  if (exporting.value) return
+  exporting.value = true
+  const selectedForExport = [...selectedTestCases.value]
+  const exportFilters = { search: searchText.value, project: projectFilter.value, group: groupFilter.value, priority: priorityFilter.value }
   try {
-    loading.value = true
+    const XLSX = await import('xlsx')
 
     // 确定要导出的数据
     let testCasesToExport = []
 
-    if (selectedTestCases.value.length > 0) {
+    if (selectedForExport.length > 0) {
       // 如果有勾选，导出勾选的数据
-      testCasesToExport = selectedTestCases.value
+      testCasesToExport = selectedForExport
     } else {
       // 如果没有勾选，分页获取所有数据
       const pageSize = 100  // 使用后端允许的最大值
@@ -437,9 +657,7 @@ const exportToExcel = async () => {
           params: {
             page: page,
             page_size: pageSize,
-            search: searchText.value,
-            project: projectFilter.value,
-            priority: priorityFilter.value
+            ...exportFilters
           }
         })
 
@@ -460,7 +678,7 @@ const exportToExcel = async () => {
 
     if (testCasesToExport.length === 0) {
       ElMessage.warning(t('testcase.noDataToExport'))
-      loading.value = false
+      exporting.value = false
       return
     }
 
@@ -469,7 +687,7 @@ const exportToExcel = async () => {
 
     // 准备Excel数据
     const worksheetData = [
-      [t('testcase.excelNumber'), t('testcase.excelTitle'), t('testcase.excelProject'), t('testcase.excelVersions'), t('testcase.excelPreconditions'), t('testcase.excelSteps'), t('testcase.excelExpectedResult'), t('testcase.excelPriority'), t('testcase.excelTestType'), t('testcase.excelAuthor'), t('testcase.excelCreatedAt')]
+      [t('testcase.excelNumber'), t('testcase.excelTitle'), t('testcase.excelProject'), t('testcase.excelGroup'), t('testcase.excelVersions'), t('testcase.excelPreconditions'), t('testcase.excelSteps'), t('testcase.excelExpectedResult'), t('testcase.excelPriority'), t('testcase.excelTestType'), t('testcase.excelAuthor'), t('testcase.excelCreatedAt')]
     ]
 
     testCasesToExport.forEach((testcase, index) => {
@@ -481,6 +699,7 @@ const exportToExcel = async () => {
         `TC${String(index + 1).padStart(3, '0')}`,
         testcase.title || '',
         testcase.project?.name || '',
+        testcase.group?.name || t('testcase.ungrouped'),
         versions,
         convertBrToNewline(testcase.preconditions || ''),
         convertBrToNewline(testcase.steps || ''),
@@ -500,6 +719,7 @@ const exportToExcel = async () => {
       { wch: 15 }, // Test case number
       { wch: 30 }, // Case title
       { wch: 20 }, // Related project
+      { wch: 20 }, // Group
       { wch: 25 }, // Related versions
       { wch: 30 }, // Preconditions
       { wch: 40 }, // Steps
@@ -547,7 +767,7 @@ const exportToExcel = async () => {
     console.error('Export test cases failed:', error)
     ElMessage.error(t('testcase.exportFailed') + ': ' + (error.message || t('common.error')))
   } finally {
-    loading.value = false
+    exporting.value = false
   }
 }
 
@@ -642,79 +862,21 @@ const fetchProjects = async () => {
 
 onMounted(() => {
   fetchProjects()
+  fetchGroups()
   fetchTestCases()
 })
 </script>
 
 <style lang="scss" scoped>
-.page-container {
+.header-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.header-actions .el-button + .el-button { margin-left: 0; }
+.group-dialog-toolbar {
   display: flex;
-  flex-direction: column;
-  height: 100vh;
-  padding: 20px;
-  box-sizing: border-box;
-  overflow: hidden;
-}
+  gap: 12px;
+  margin-bottom: 16px;
 
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-  flex-shrink: 0;
+  .el-select { flex: 1; }
 }
-
-.page-title {
-  margin: 0;
-  font-size: 24px;
-  font-weight: 600;
-  color: #303133;
-}
-
-.header-actions {
-  display: flex;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.card-container {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  overflow: hidden;
-  background: #fff;
-  border-radius: 4px;
-  box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.1);
-}
-
-.filter-bar {
-  padding: 20px;
-  border-bottom: 1px solid #ebeef5;
-  flex-shrink: 0;
-}
-
-.table-container {
-  flex: 1;
-  overflow: hidden;
-  padding: 0 20px;
-  
-  :deep(.el-table) {
-    height: 100% !important;
-  }
-  
-  :deep(.el-table__body-wrapper) {
-    overflow-y: auto !important;
-  }
-}
-
-.pagination-container {
-  padding: 20px;
-  border-top: 1px solid #ebeef5;
-  display: flex;
-  justify-content: center;
-  flex-shrink: 0;
-}
-
 .import-alert {
   margin-bottom: 20px;
 }
@@ -729,10 +891,10 @@ onMounted(() => {
 }
 
 .priority-tag {
-  &.low { color: #67c23a; }
-  &.medium { color: #e6a23c; }
-  &.high { color: #f56c6c; }
-  &.critical { color: #f56c6c; font-weight: bold; }
+  &.low { color: var(--th-success); }
+  &.medium { color: var(--th-warning); }
+  &.high { color: var(--th-danger); }
+  &.critical { color: var(--th-danger); font-weight: bold; }
 }
 
 .version-tags {
@@ -751,57 +913,4 @@ onMounted(() => {
   font-style: italic;
 }
 
-@media (max-width: 1200px) {
-  .page-container {
-    height: auto;
-    min-height: 100vh;
-    overflow-y: auto;
-  }
-  
-  .card-container {
-    min-height: 600px;
-  }
-  
-  .table-container {
-    min-height: 400px;
-  }
-}
-
-@media (max-width: 768px) {
-  .page-container {
-    padding: 10px;
-  }
-  
-  .page-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 15px;
-  }
-  
-  .header-actions {
-    width: 100%;
-  }
-  
-  .filter-bar {
-    padding: 15px;
-  }
-  
-  .pagination-container {
-    padding: 15px;
-  }
-}
-
-.step-content {
-  min-height: 200px;
-}
-
-.preview-info {
-  padding: 15px;
-  background-color: #f5f7fa;
-  border-radius: 4px;
-
-  p {
-    margin: 5px 0;
-  }
-}
 </style>

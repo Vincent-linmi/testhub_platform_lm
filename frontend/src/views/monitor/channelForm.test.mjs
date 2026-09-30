@@ -23,7 +23,7 @@ test('isCiphertext 识别 Fernet 令牌', () => {
 
 test('defaultConfig 各类型结构正确', () => {
   assert.deepEqual(defaultConfig('DINGTALK'), { webhook_url: '', secret: '', at_all: true })
-  assert.deepEqual(defaultConfig('WECOM'), { webhook_url: '', mentioned_list: [] })
+  assert.deepEqual(defaultConfig('WECOM'), { webhook_url: '', mentioned_list: [], at_all: false })
   assert.deepEqual(defaultConfig('EMAIL'), {
     host: '', port: 465, username: '', password: '', use_ssl: true, receivers: [],
   })

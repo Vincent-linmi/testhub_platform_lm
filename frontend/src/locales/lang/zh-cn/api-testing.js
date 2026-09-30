@@ -681,7 +681,7 @@ export default {
         encodingConversion: '编码转换',
         encryption: '加密',
         datetime: '时间日期',
-        crontab: 'Crontab',
+
         uncategorized: '未分类',
         // 中文分类名称映射（用于API返回的中文分类名称）
         '随机数': '随机数',

@@ -122,7 +122,7 @@
           <el-switch v-model="createForm.is_unique" />
         </el-form-item>
         <el-form-item :label="$t('uiAutomation.element.waitTimeout')" prop="wait_timeout">
-          <el-input-number v-model="createForm.wait_timeout" :min="0" :max="30" :step="1" />
+          <el-input-number v-model="createForm.wait_timeout" :min="1" :max="60" :step="1" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -166,7 +166,7 @@
           <el-switch v-model="editForm.is_unique" />
         </el-form-item>
         <el-form-item :label="$t('uiAutomation.element.waitTimeout')" prop="wait_timeout">
-          <el-input-number v-model="editForm.wait_timeout" :min="0" :max="30" :step="1" />
+          <el-input-number v-model="editForm.wait_timeout" :min="1" :max="60" :step="1" />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -180,7 +180,7 @@
     <!-- 元素详情对话框 -->
     <el-dialog v-model="showDetailDialog" :title="$t('uiAutomation.element.elementDetail')" width="600px">
       <div v-if="Object.keys(currentElementDetail).length > 0" class="element-detail">
-        <el-descriptions border column="2" :column="{ xs: 1, sm: 2 }">
+        <el-descriptions border :column="isMobile ? 1 : 2">
           <el-descriptions-item :label="$t('uiAutomation.element.elementName')">{{ currentElementDetail.name }}</el-descriptions-item>
           <el-descriptions-item :label="$t('uiAutomation.element.page')">{{ currentElementDetail.page }}</el-descriptions-item>
           <el-descriptions-item :label="$t('uiAutomation.element.project')">{{ currentElementDetail.project?.name || '-' }}</el-descriptions-item>
@@ -195,7 +195,7 @@
               {{ currentElementDetail.is_unique ? $t('uiAutomation.common.yes') : $t('uiAutomation.common.no') }}
             </el-tag>
           </el-descriptions-item>
-          <el-descriptions-item :label="$t('uiAutomation.element.waitTimeout')">{{ currentElementDetail.wait_timeout || 5 }}{{ $t('uiAutomation.element.waitTimeoutUnit') }}</el-descriptions-item>
+          <el-descriptions-item :label="$t('uiAutomation.element.waitTimeout')">{{ currentElementDetail.wait_timeout || 60 }}{{ $t('uiAutomation.element.waitTimeoutUnit') }}</el-descriptions-item>
           <el-descriptions-item :label="$t('uiAutomation.common.description')" :span="2">{{ currentElementDetail.description === undefined ? '-' : currentElementDetail.description }}</el-descriptions-item>
           <el-descriptions-item :label="$t('uiAutomation.common.createTime')">{{ formatDate(null, null, currentElementDetail.created_at) }}</el-descriptions-item>
           <el-descriptions-item :label="$t('uiAutomation.common.updateTime')">{{ formatDate(null, null, currentElementDetail.updated_at) }}</el-descriptions-item>
@@ -215,6 +215,8 @@
 </template>
 
 <script setup>
+import { useMediaQuery } from '@/composables/useMediaQuery'
+const isMobile = useMediaQuery('(max-width: 768px)')
 import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Search, View, Edit, Delete } from '@element-plus/icons-vue'
@@ -269,7 +271,7 @@ const createForm = reactive({
   strategy: '',
   locator_value: '',
   is_unique: false,
-  wait_timeout: 5
+  wait_timeout: 60
 })
 
 const editForm = reactive({
@@ -280,7 +282,7 @@ const editForm = reactive({
   strategy: '',
   locator_value: '',
   is_unique: false,
-  wait_timeout: 5
+  wait_timeout: 60
 })
 
 // 表单验证规则
@@ -457,7 +459,7 @@ const editElement = (element) => {
     strategy: strategy ? strategy.id : '',
     locator_value: element.locator_value,
     is_unique: element.is_unique,
-    wait_timeout: element.wait_timeout || 5
+    wait_timeout: element.wait_timeout || 60
   })
 
   showEditDialog.value = true
@@ -522,7 +524,7 @@ const handleCreate = async () => {
       strategy: '',
       locator_value: '',
       is_unique: false,
-      wait_timeout: 5
+      wait_timeout: 60
     })
     
     loadElements()

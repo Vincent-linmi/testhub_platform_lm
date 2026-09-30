@@ -15,6 +15,10 @@ export default {
     importRecords: '导入记录',
     saveChanges: '保存修改',
     createCase: '创建用例',
+    manageGroups: '分组管理',
+    newGroup: '新建分组',
+    renameGroup: '重命名分组',
+    moveToGroup: '移动到分组',
 
     // Field labels
     caseTitle: '用例标题',
@@ -31,6 +35,10 @@ export default {
     author: '作者',
     createdAt: '创建时间',
     serialNumber: '序号',
+    group: '用例分组',
+    groupName: '分组名称',
+    caseCount: '用例数',
+    targetGroup: '目标分组',
 
     // Priority
     low: '低',
@@ -65,6 +73,10 @@ export default {
     expectedResultPlaceholder: '请输入整体预期结果',
     priorityFilter: '优先级筛选',
     statusFilter: '状态筛选',
+    groupFilter: '分组筛选',
+    selectProjectForGroup: '请选择要管理分组的项目',
+    selectTargetGroup: '请选择目标分组',
+    groupNamePlaceholder: '请输入分组名称',
     importDialogTitle: '导入测试用例',
     uploadTip: '请先下载模板，按模板填写后上传 .xlsx 文件',
     importProject: '导入项目',
@@ -125,6 +137,18 @@ export default {
     importFileRequired: '请先选择导入文件',
     noImportFile: '暂无失败明细文件可下载',
     downloadFailureReportFailed: '下载失败明细失败',
+    fetchGroupsFailed: '获取用例分组失败',
+    groupNameRequired: '分组名称不能为空',
+    groupCreateSuccess: '分组创建成功',
+    groupCreateFailed: '分组创建失败',
+    groupRenameSuccess: '分组重命名成功',
+    groupRenameFailed: '分组重命名失败',
+    groupDeleteConfirm: '确定删除分组“{name}”吗？其中 {count} 条用例将变为未分组，用例不会被删除。',
+    groupDeleteSuccess: '分组删除成功',
+    groupDeleteFailed: '分组删除失败',
+    sameProjectRequired: '批量移动时请选择同一项目下的用例',
+    moveGroupSuccess: '已移动 {count} 条测试用例',
+    moveGroupFailed: '移动测试用例失败',
 
     // Other
     noVersion: '未关联版本',
@@ -132,6 +156,8 @@ export default {
     noDescription: '暂无描述',
     none: '无',
     baseline: '基线',
+    ungrouped: '未分组',
+    noGroups: '当前项目暂无分组',
 
     // Validation
     titleRequired: '请输入用例标题',
@@ -143,6 +169,7 @@ export default {
     excelNumber: '测试用例编号',
     excelTitle: '用例标题',
     excelProject: '关联项目',
+    excelGroup: '用例分组',
     excelVersions: '关联版本',
     excelPreconditions: '前置条件',
     excelSteps: '操作步骤',

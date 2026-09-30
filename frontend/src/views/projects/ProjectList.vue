@@ -1,40 +1,39 @@
 <template>
-  <div class="page-container">
-    <div class="page-header">
-      <h1 class="page-title">{{ $t('project.projectManagement') }}</h1>
+  <div class="page-container th-list-page">
+    <PageHeader :title="$t('project.projectManagement')">
       <el-button type="primary" @click="handleCreateProject">
         <el-icon><Plus /></el-icon>
         {{ $t('project.newProject') }}
       </el-button>
-    </div>
+    </PageHeader>
 
     <div class="card-container">
-      <div class="filter-bar">
-        <el-row :gutter="20">
-          <el-col :span="6">
-            <el-input
-              v-model="searchText"
-              :placeholder="$t('project.searchPlaceholder')"
-              clearable
-              @input="handleSearch"
-            >
-              <template #prefix>
-                <el-icon><Search /></el-icon>
-              </template>
-            </el-input>
-          </el-col>
-          <el-col :span="4">
-            <el-select v-model="statusFilter" :placeholder="$t('project.statusFilter')" clearable @change="handleFilter">
-              <el-option :label="$t('project.active')" value="active" />
-              <el-option :label="$t('project.paused')" value="paused" />
-              <el-option :label="$t('project.completed')" value="completed" />
-              <el-option :label="$t('project.archived')" value="archived" />
-            </el-select>
-          </el-col>
-        </el-row>
+      <div class="list-toolbar">
+        <el-input
+          v-model="searchText"
+          :placeholder="$t('project.searchPlaceholder')" :aria-label="$t('project.searchPlaceholder')"
+          clearable
+          @input="handleSearch"
+          @keyup.enter="handleFilter"
+        >
+          <template #prefix>
+            <el-icon><Search /></el-icon>
+          </template>
+        </el-input>
+        <el-select v-model="statusFilter" :placeholder="$t('project.statusFilter')" :aria-label="$t('project.statusFilter')" clearable @change="handleFilter">
+          <el-option :label="$t('project.active')" value="active" />
+          <el-option :label="$t('project.paused')" value="paused" />
+          <el-option :label="$t('project.completed')" value="completed" />
+          <el-option :label="$t('project.archived')" value="archived" />
+        </el-select>
+
+        <el-button @click="resetFilters">{{ $t('common.resetFilters') }}</el-button>
       </div>
       
-      <el-table :data="projects" v-loading="loading" style="width: 100%">
+      <el-alert v-if="listError" type="error" :closable="false" show-icon class="list-error" :title="$t('project.fetchListFailed')">
+        <el-button link type="primary" @click="fetchProjects">{{ $t('common.retry') }}</el-button>
+      </el-alert>
+      <el-table row-key="id" :data="projects" v-loading="loading" :empty-text="listError ? $t('common.loadFailed') : $t('common.noResults')" style="width: 100%">
         <el-table-column prop="name" :label="$t('project.projectName')" min-width="200">
           <template #default="{ row }">
             <el-link @click="goToProject(row.id)" type="primary">
@@ -54,20 +53,21 @@
             {{ formatDate(row.created_at) }}
           </template>
         </el-table-column>
-        <el-table-column :label="$t('project.actions')" width="150" fixed="right">
+        <el-table-column :label="$t('project.actions')" width="150" :fixed="isMobile ? false : 'right'">
           <template #default="{ row }">
-            <el-button size="small" @click="editProject(row)">{{ $t('common.edit') }}</el-button>
-            <el-button size="small" type="danger" @click="deleteProject(row)">{{ $t('common.delete') }}</el-button>
+            <el-button link type="primary" size="small" @click="editProject(row)">{{ $t('common.edit') }}</el-button>
+            <el-button link size="small" type="danger" @click="deleteProject(row)">{{ $t('common.delete') }}</el-button>
           </template>
         </el-table-column>
       </el-table>
       
       <div class="pagination-container">
         <el-pagination
-          v-model:current-page="currentPage"
+          :current-page="currentPage"
           :page-size="pageSize"
           :total="total"
           layout="total, prev, pager, next"
+          :pager-count="5"
           @current-change="handlePageChange"
         />
       </div>
@@ -84,20 +84,20 @@
       width="600px"
       @close="handleDialogClose"
     >
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="100px">
+      <el-form ref="formRef" :model="form" :rules="rules" label-width="100px" :label-position="isMobile ? 'top' : 'right'">
         <el-form-item :label="$t('project.projectName')" prop="name">
-          <el-input v-model="form.name" :placeholder="$t('project.projectNamePlaceholder')" />
+          <el-input v-model="form.name" :placeholder="$t('project.projectNamePlaceholder')" :aria-label="$t('project.projectNamePlaceholder')" />
         </el-form-item>
         <el-form-item :label="$t('project.projectDescription')" prop="description">
           <el-input
             v-model="form.description"
             type="textarea"
             :rows="4"
-            :placeholder="$t('project.projectDescriptionPlaceholder')"
+            :placeholder="$t('project.projectDescriptionPlaceholder')" :aria-label="$t('project.projectDescriptionPlaceholder')"
           />
         </el-form-item>
         <el-form-item :label="$t('project.status')" prop="status">
-          <el-select v-model="form.status" :placeholder="$t('project.selectStatus')">
+          <el-select v-model="form.status" :placeholder="$t('project.selectStatus')" :aria-label="$t('project.selectStatus')">
             <el-option :label="$t('project.active')" value="active" />
             <el-option :label="$t('project.paused')" value="paused" />
             <el-option :label="$t('project.completed')" value="completed" />
@@ -121,12 +121,15 @@ import { ref, reactive, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import PageHeader from '@/components/PageHeader.vue'
+import { useListRequest } from '@/composables/useListRequest'
+import { useMediaQuery } from '@/composables/useMediaQuery'
 import api from '@/utils/api'
 import dayjs from 'dayjs'
 
 const router = useRouter()
 const { t } = useI18n()
-const loading = ref(false)
+const isMobile = useMediaQuery('(max-width: 768px)')
 const submitting = ref(false)
 const showCreateDialog = ref(false)
 const isEdit = ref(false)
@@ -146,46 +149,37 @@ const form = reactive({
   status: 'active'
 })
 
-const rules = {
+const rules = computed(() => ({
   name: [
-    { required: true, message: computed(() => t('project.projectNameRequired')), trigger: 'blur' },
-    { min: 2, max: 200, message: computed(() => t('project.projectNameLength')), trigger: 'blur' }
+    { required: true, message: t('project.projectNameRequired'), trigger: 'blur' },
+    { min: 2, max: 200, message: t('project.projectNameLength'), trigger: 'blur' }
   ],
   status: [
-    { required: true, message: computed(() => t('project.projectStatusRequired')), trigger: 'change' }
+    { required: true, message: t('project.projectStatusRequired'), trigger: 'change' }
   ]
-}
+}))
 
-const fetchProjects = async () => {
-  loading.value = true
-  try {
-    const params = {
-      page: currentPage.value,
-      search: searchText.value,
-      status: statusFilter.value
-    }
-    const response = await api.get('/projects/', { params })
-    projects.value = response.data.results
-    total.value = response.data.count
-  } catch (error) {
-    ElMessage.error(t('project.fetchListFailed'))
-  } finally {
-    loading.value = false
+const { loading, error: listError, load: fetchProjects, schedule: scheduleSearch } = useListRequest(
+  (signal) => api.get('/projects/', { signal, params: {
+    page: currentPage.value, search: searchText.value, status: statusFilter.value
+  } }),
+  (response) => {
+    projects.value = response.data.results || []
+    total.value = response.data.count || 0
   }
-}
+)
 
-const handleSearch = () => {
-  currentPage.value = 1
+const handleSearch = () => { currentPage.value = 1; scheduleSearch() }
+const handleFilter = () => { currentPage.value = 1; fetchProjects() }
+const handlePageChange = (page) => {
+  if (page === currentPage.value) return
+  currentPage.value = page
   fetchProjects()
 }
-
-const handleFilter = () => {
-  currentPage.value = 1
-  fetchProjects()
-}
-
-const handlePageChange = () => {
-  fetchProjects()
+const resetFilters = () => {
+  searchText.value = ''
+  statusFilter.value = ''
+  handleFilter()
 }
 
 const goToProject = (id) => {
@@ -223,7 +217,7 @@ const resetForm = () => {
 }
 
 const handleSubmit = async () => {
-  if (!formRef.value) return
+  if (!formRef.value || submitting.value) return
 
   await formRef.value.validate(async (valid) => {
     if (valid) {
@@ -295,145 +289,6 @@ onMounted(() => {
 })
 </script>
 
-<style lang="scss" scoped>
-.filter-bar {
-  margin-bottom: 20px;
-}
-
-.pagination-container {
-  margin-top: 20px;
-  display: flex;
-  justify-content: center;
-}
-
-@media screen and (max-width: 1920px) {
-  .filter-bar {
-    margin-bottom: 18px;
-  }
-  
-  .pagination-container {
-    margin-top: 18px;
-  }
-}
-
-@media screen and (max-width: 1600px) {
-  .filter-bar {
-    margin-bottom: 16px;
-  }
-  
-  .pagination-container {
-    margin-top: 16px;
-  }
-}
-
-@media screen and (max-width: 1440px) {
-  .filter-bar {
-    margin-bottom: 14px;
-  }
-  
-  .pagination-container {
-    margin-top: 14px;
-  }
-}
-
-@media screen and (max-width: 1366px) {
-  .filter-bar {
-    margin-bottom: 12px;
-  }
-  
-  .pagination-container {
-    margin-top: 12px;
-  }
-}
-
-@media screen and (max-width: 1280px) {
-  .filter-bar {
-    margin-bottom: 12px;
-  }
-  
-  .pagination-container {
-    margin-top: 12px;
-  }
-}
-
-@media screen and (max-width: 1024px) {
-  .filter-bar {
-    margin-bottom: 10px;
-    
-    :deep(.el-row) {
-      flex-direction: column;
-      
-      .el-col {
-        width: 100%;
-        margin-bottom: 10px;
-      }
-    }
-  }
-  
-  .pagination-container {
-    margin-top: 10px;
-    
-    :deep(.el-pagination) {
-      flex-wrap: wrap;
-      justify-content: center;
-    }
-  }
-}
-
-@media screen and (max-width: 768px) {
-  .page-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 10px;
-  }
-  
-  .filter-bar {
-    margin-bottom: 8px;
-  }
-  
-  .pagination-container {
-    margin-top: 8px;
-    
-    :deep(.el-pagination) {
-      :deep(.el-pagination__sizes),
-      :deep(.el-pagination__jump) {
-        display: none;
-      }
-    }
-  }
-  
-  :deep(.el-dialog) {
-    width: 95% !important;
-    margin: 0 auto;
-  }
-}
-
-@media screen and (max-width: 480px) {
-  .page-header {
-    :deep(.el-button) {
-      width: 100%;
-    }
-  }
-  
-  .filter-bar {
-    margin-bottom: 6px;
-  }
-  
-  .pagination-container {
-    margin-top: 6px;
-  }
-  
-  :deep(.el-table) {
-    font-size: 12px;
-    
-    .el-button {
-      padding: 5px 8px;
-      font-size: 12px;
-    }
-  }
-  
-  :deep(.el-dialog) {
-    width: 98% !important;
-  }
-}
+<style scoped>
+.el-form .el-select { width: 100%; }
 </style>

@@ -494,7 +494,7 @@ const displayLoadSnapshot = computed(() => {
 const errorRows = computed(() => {
   const rows = []
   requestStats.value.forEach(stat => {
-    ;(stat.error_detail || []).forEach(item => {
+    (stat.error_detail || []).forEach(item => {
       rows.push({
         step_name: stat.step_name,
         type: item.type || item.error_type || 'Unknown',
@@ -683,7 +683,7 @@ async function loadAiAnalysis() {
     const reader = resp.body.getReader()
     const decoder = new TextDecoder('utf-8')
     let buffer = ''
-    while (true) {
+    for (;;) {
       const { done, value } = await reader.read()
       if (done) break
       resetIdleTimer()

@@ -1,4 +1,12 @@
 export default {
+  navigation: 'Navigation',
+  openNavigation: 'Open navigation',
+  retry: 'Retry',
+  noResults: 'No matching results',
+  resetFilters: 'Reset filters',
+  loadFailed: 'Unable to load data. Please retry.',
+  moreActions: 'More actions',
+
   confirm: 'Confirm',
   cancel: 'Cancel',
   save: 'Save',

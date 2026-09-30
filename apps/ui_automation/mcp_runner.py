@@ -27,7 +27,9 @@ logger = logging.getLogger(__name__)
 def _collect_steps_data(case):
     """预加载步骤与元素数据（与 views.run 相同的快照结构）。"""
     steps_data = []
-    for step in case.steps.all().order_by('step_number'):
+    for step in case.steps.select_related(
+        'element', 'element__locator_strategy', 'file_asset'
+    ).prefetch_related('file_assets').order_by('step_number'):
         step_data = {
             'step': step,
             'action_type': step.action_type,
@@ -110,6 +112,8 @@ async def _run_playwright_async(execution, case, steps_data, browser, headless):
                     'step_number': i,
                     'timestamp': timezone.now().isoformat(),
                 })
+            if case.global_wait_enabled and i < len(steps_data):
+                await asyncio.sleep(case.global_wait_time / 1000)
     finally:
         try:
             await engine.stop()
@@ -122,6 +126,13 @@ async def _safe_screenshot(engine, is_async=False):
     try:
         if is_async:
             return await engine.capture_screenshot()
+        return engine.capture_screenshot()
+    except Exception:
+        return None
+
+
+def _safe_screenshot_sync(engine):
+    try:
         return engine.capture_screenshot()
     except Exception:
         return None
@@ -158,7 +169,7 @@ def _run_selenium_sync(execution, case, steps_data, browser, headless):
             if not success:
                 result['status'] = 'failed'
                 result['error_message'] = f'步骤 {i} 执行失败: {step_log}'
-                shot = shot or _safe_screenshot(engine)
+                shot = shot or _safe_screenshot_sync(engine)
                 if shot:
                     screenshots.append({
                         'url': shot,
@@ -174,6 +185,8 @@ def _run_selenium_sync(execution, case, steps_data, browser, headless):
                     'step_number': i,
                     'timestamp': timezone.now().isoformat(),
                 })
+            if case.global_wait_enabled and i < len(steps_data):
+                time.sleep(case.global_wait_time / 1000)
     finally:
         try:
             engine.stop()
@@ -224,7 +237,7 @@ def start_case_execution(case, user, engine='playwright', browser='chrome',
         user: 触发执行的用户
         engine: 'playwright' | 'selenium'
         browser: 浏览器类型（chrome/firefox/edge/safari）
-        headless: 是否无头模式（MCP 服务端场景默认无头）
+        headless: 兼容旧调用参数；服务端执行始终使用无头模式
 
     Returns:
         TestCaseExecution（status='running'）
@@ -232,6 +245,11 @@ def start_case_execution(case, user, engine='playwright', browser='chrome',
     Raises:
         ValueError: 执行环境检查失败（浏览器/驱动缺失等）
     """
+    headless = True  # MCP 调用在服务端执行，不能启动桌面窗口。
+    if case.data_driven_enabled:
+        from .data_driven import start_data_execution
+        return start_data_execution(case, user, engine=engine, browser=browser, headless=headless)
+
     from .playwright_engine import PlaywrightTestEngine
     from .selenium_engine import SeleniumTestEngine
 

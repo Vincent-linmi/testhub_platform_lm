@@ -1,7 +1,10 @@
 from django.db import models
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 import json
+import re
+import uuid
 
 User = get_user_model()
 
@@ -120,7 +123,7 @@ class Element(models.Model):
 
     # 元素属性
     is_unique = models.BooleanField(default=False, verbose_name='是否唯一')
-    wait_timeout = models.IntegerField(default=5, verbose_name='等待超时(秒)')
+    wait_timeout = models.IntegerField(default=60, verbose_name='等待超时(秒)')
     is_visible = models.BooleanField(default=True, verbose_name='是否可见')
     is_enabled = models.BooleanField(default=True, verbose_name='是否启用')
     force_action = models.BooleanField(default=False, verbose_name='强制操作', help_text='对visibility:hidden的元素使用force选项')
@@ -571,6 +574,37 @@ class Screenshot(models.Model):
         return self.name
 
 
+class TestCaseGroup(models.Model):
+    """项目内的 UI 自动化测试用例分组。"""
+
+    project = models.ForeignKey(
+        UiProject,
+        on_delete=models.CASCADE,
+        related_name='test_case_groups',
+        verbose_name='所属项目',
+    )
+    name = models.CharField(max_length=100, verbose_name='分组名称')
+    description = models.CharField(max_length=500, blank=True, verbose_name='分组描述')
+    order = models.PositiveIntegerField(default=0, verbose_name='排序')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+
+    class Meta:
+        db_table = 'ui_test_case_groups'
+        verbose_name = 'UI测试用例分组'
+        verbose_name_plural = 'UI测试用例分组'
+        ordering = ['order', 'name']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['project', 'name'],
+                name='unique_ui_test_case_group_name_per_project',
+            ),
+        ]
+
+    def __str__(self):
+        return self.name
+
+
 class TestCase(models.Model):
     """UI自动化测试用例模型"""
     STATUS_CHOICES = [
@@ -590,8 +624,24 @@ class TestCase(models.Model):
     name = models.CharField(max_length=200, verbose_name='用例名称')
     description = models.TextField(blank=True, verbose_name='用例描述')
     project = models.ForeignKey(UiProject, on_delete=models.CASCADE, related_name='test_cases', verbose_name='所属项目')
+    group = models.ForeignKey(
+        TestCaseGroup,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='test_cases',
+        verbose_name='用例分组',
+    )
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='draft', verbose_name='状态')
     priority = models.CharField(max_length=10, choices=PRIORITY_CHOICES, default='medium', verbose_name='优先级')
+    data_driven_enabled = models.BooleanField(default=False, verbose_name='启用数据驱动')
+    data_rows = models.JSONField(default=list, blank=True, verbose_name='测试数据行')
+    global_wait_enabled = models.BooleanField(default=False, verbose_name='启用步骤间全局等待')
+    global_wait_time = models.PositiveIntegerField(
+        default=1000,
+        validators=[MinValueValidator(100), MaxValueValidator(60000)],
+        verbose_name='步骤间全局等待时间(毫秒)'
+    )
     created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='created_test_cases', verbose_name='创建人')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
     updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
@@ -606,6 +656,39 @@ class TestCase(models.Model):
         return self.name
 
 
+class TestFileAsset(models.Model):
+    """UI 自动化用例可复用的测试文件。"""
+
+    project = models.ForeignKey(
+        UiProject,
+        on_delete=models.CASCADE,
+        related_name='test_file_assets',
+        verbose_name='所属项目'
+    )
+    name = models.CharField(max_length=255, verbose_name='文件名')
+    file = models.FileField(upload_to='ui_test_assets/%Y/%m/%d/', verbose_name='文件')
+    mime_type = models.CharField(max_length=150, blank=True, verbose_name='MIME类型')
+    file_size = models.BigIntegerField(default=0, verbose_name='文件大小')
+    sha256 = models.CharField(max_length=64, blank=True, verbose_name='SHA256')
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        related_name='created_ui_test_file_assets',
+        verbose_name='上传人'
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+
+    class Meta:
+        db_table = 'ui_test_file_assets'
+        verbose_name = 'UI测试文件'
+        verbose_name_plural = 'UI测试文件'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return self.name
+
+
 class TestCaseStep(models.Model):
     """测试用例步骤模型"""
     ACTION_TYPE_CHOICES = [
@@ -613,12 +696,18 @@ class TestCaseStep(models.Model):
         ('fill', '输入文本'),
         ('getText', '获取文本'),
         ('waitFor', '等待元素'),
+        ('waitForEnabled', '等待元素可用'),
         ('hover', '悬停'),
         ('scroll', '滚动'),
         ('screenshot', '截图'),
         ('assert', '断言'),
         ('wait', '等待'),
         ('switchTab', '切换标签页'),
+        ('uploadFile', '上传文件'),
+        ('selectOption', '选择下拉选项'),
+        ('check', '勾选'),
+        ('uncheck', '取消勾选'),
+        ('press', '键盘按键'),
     ]
 
     ASSERT_TYPE_CHOICES = [
@@ -627,6 +716,16 @@ class TestCaseStep(models.Model):
         ('isVisible', '元素可见'),
         ('exists', '元素存在'),
         ('hasAttribute', '属性值'),
+        ('notVisible', '元素不可见'),
+        ('notExists', '元素不存在'),
+        ('valueEquals', '输入框值等于'),
+        ('isChecked', '已选中'),
+        ('notChecked', '未选中'),
+        ('isEnabled', '已启用'),
+        ('isDisabled', '已禁用'),
+        ('countEquals', '元素数量等于'),
+        ('urlEquals', '页面网址等于'),
+        ('urlContains', '页面网址包含'),
     ]
 
     test_case = models.ForeignKey(TestCase, on_delete=models.CASCADE, related_name='steps', verbose_name='测试用例')
@@ -637,6 +736,25 @@ class TestCaseStep(models.Model):
     wait_time = models.IntegerField(default=1000, verbose_name='等待时间(毫秒)')
     assert_type = models.CharField(max_length=20, choices=ASSERT_TYPE_CHOICES, blank=True, verbose_name='断言类型')
     assert_value = models.TextField(blank=True, verbose_name='断言期望值')
+    file_asset = models.ForeignKey(
+        TestFileAsset,
+        on_delete=models.PROTECT,
+        null=True,
+        blank=True,
+        related_name='test_case_steps',
+        verbose_name='测试文件'
+    )
+    file_assets = models.ManyToManyField(
+        TestFileAsset,
+        blank=True,
+        related_name='multi_file_test_case_steps',
+        verbose_name='测试文件（多选）'
+    )
+    file_asset_order = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name='测试文件顺序'
+    )
     description = models.TextField(blank=True, verbose_name='步骤描述')
     created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
 
@@ -672,6 +790,9 @@ class TestCaseExecution(models.Model):
         ('scheduled', '定时任务执行'),
     ]
 
+    batch_id = models.UUIDField(null=True, blank=True, db_index=True, verbose_name='执行批次')
+    data_index = models.PositiveIntegerField(null=True, blank=True, verbose_name='数据行号')
+    data_row = models.JSONField(default=dict, blank=True, verbose_name='执行数据快照')
     test_case = models.ForeignKey(TestCase, on_delete=models.CASCADE, related_name='executions', verbose_name='测试用例')
     project = models.ForeignKey(UiProject, on_delete=models.CASCADE, related_name='test_case_executions', verbose_name='项目')
     test_suite = models.ForeignKey('TestSuite', on_delete=models.CASCADE, null=True, blank=True, related_name='case_executions', verbose_name='所属测试套件')
@@ -697,6 +818,107 @@ class TestCaseExecution(models.Model):
 
     def __str__(self):
         return f"{self.test_case.name} - {self.created_at.strftime('%Y-%m-%d %H:%M:%S')}"
+
+
+def local_execution_artifact_path(instance, filename):
+    """Store agent artifacts in a collision-free, server-controlled path."""
+    raw_extension = filename.rsplit('.', 1)[-1].lower() if '.' in filename else 'bin'
+    extension = re.sub(r'[^a-z0-9]', '', raw_extension)[:10] or 'bin'
+    return (
+        f"ui_local_executions/{instance.job_id}/{instance.job.attempt_id}/"
+        f"{instance.artifact_type}-{uuid.uuid4().hex}.{extension}"
+    )
+
+
+class LocalExecutionJob(models.Model):
+    """One on-demand execution claimed by a locally launched Playwright agent."""
+
+    STATUS_CHOICES = [
+        ('waiting_runner', '等待本机执行器'),
+        ('claimed', '已领取'),
+        ('running', '执行中'),
+        ('passed', '通过'),
+        ('failed', '失败'),
+        ('cancelled', '已取消'),
+        ('expired', '已过期'),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    attempt_id = models.UUIDField(default=uuid.uuid4, editable=False)
+    execution = models.OneToOneField(
+        TestCaseExecution,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name='local_job',
+        verbose_name='执行记录'
+    )
+    suite_execution = models.OneToOneField(
+        TestExecution,
+        null=True,
+        blank=True,
+        on_delete=models.CASCADE,
+        related_name='local_job',
+        verbose_name='套件执行记录',
+    )
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='ui_local_execution_jobs',
+        verbose_name='发起人'
+    )
+    status = models.CharField(
+        max_length=30,
+        choices=STATUS_CHOICES,
+        default='waiting_runner',
+        db_index=True,
+        verbose_name='状态'
+    )
+    launch_code_hash = models.CharField(max_length=64, unique=True, verbose_name='一次性领取码摘要')
+    upload_token_hash = models.CharField(max_length=64, blank=True, verbose_name='任务令牌摘要')
+    payload = models.JSONField(default=dict, verbose_name='执行快照')
+    expires_at = models.DateTimeField(verbose_name='领取截止时间')
+    claimed_at = models.DateTimeField(null=True, blank=True, verbose_name='领取时间')
+    completed_at = models.DateTimeField(null=True, blank=True, verbose_name='完成时间')
+    error_message = models.TextField(blank=True, verbose_name='错误信息')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+
+    class Meta:
+        db_table = 'ui_local_execution_jobs'
+        ordering = ['-created_at']
+        constraints = [models.CheckConstraint(
+            # Django clears nullable CASCADE fields before deleting on MySQL.
+            # Permit that transient state, but never attach a job to both types.
+            check=models.Q(execution__isnull=True) | models.Q(suite_execution__isnull=True),
+            name='local_job_at_most_one_execution',
+        )]
+
+
+class LocalExecutionArtifact(models.Model):
+    """Trace, screenshot, log, or other file produced by a local agent."""
+
+    job = models.ForeignKey(
+        LocalExecutionJob,
+        on_delete=models.CASCADE,
+        related_name='artifacts',
+        verbose_name='本机执行任务'
+    )
+    artifact_type = models.CharField(max_length=30, verbose_name='附件类型')
+    file = models.FileField(
+        upload_to=local_execution_artifact_path,
+        max_length=500,
+        verbose_name='文件'
+    )
+    original_name = models.CharField(max_length=255, verbose_name='原始文件名')
+    content_type = models.CharField(max_length=150, blank=True, verbose_name='MIME类型')
+    file_size = models.BigIntegerField(default=0, verbose_name='文件大小')
+    sha256 = models.CharField(max_length=64, verbose_name='SHA256')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+
+    class Meta:
+        db_table = 'ui_local_execution_artifacts'
+        ordering = ['created_at']
 
 
 class OperationRecord(models.Model):

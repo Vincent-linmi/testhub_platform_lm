@@ -142,7 +142,7 @@ export default {
     useFileCases: '使用解析结果作为用例',
     useFileCasesOk: '已加载 {n} 条解析结果',
     partial: '部分成功',
-    paused: '已暂停',
+
     startBatch: '提交批量评分',
     submitting: '提交中...',
     paused: '已暂停执行',

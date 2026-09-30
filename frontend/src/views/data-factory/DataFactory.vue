@@ -24,6 +24,7 @@
               {{ $t('dataFactory.viewMode.scenario') }}
             </el-button>
           </el-button-group>
+          <el-button type="primary" @click="showTestFiles = true">测试文件</el-button>
           <el-button type="info" @click="showHistory = true">
             <el-icon><Clock /></el-icon>
             {{ $t('dataFactory.actions.history') }}
@@ -32,6 +33,9 @@
       </div>
     </el-card>
 
+    <el-dialog v-model="showTestFiles" title="测试文件" width="1100px">
+      <TestFileLibrary v-if="showTestFiles" />
+    </el-dialog>
     <!-- 工具分类视图 -->
     <div v-if="viewMode === 'category'" class="category-view">
       <div
@@ -995,6 +999,7 @@
 <script setup>
 import { ref, watch, onMounted, computed } from 'vue'
 import { useRouter } from 'vue-router'
+import TestFileLibrary from './TestFileLibrary.vue'
 import { useI18n } from 'vue-i18n'
 import { ElMessage, ElMessageBox, ElEmpty } from 'element-plus'
 import {
@@ -1037,6 +1042,7 @@ const cache = {
 }
 
 const router = useRouter()
+const showTestFiles = ref(false)
 const { t } = useI18n()
 
 const viewMode = ref('category')

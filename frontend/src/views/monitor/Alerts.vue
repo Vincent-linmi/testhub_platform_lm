@@ -157,6 +157,8 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { useI18n } from 'vue-i18n'
+const { t } = useI18n()
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Refresh, Switch } from '@element-plus/icons-vue'
 import { getAlerts, acknowledgeAlert, resolveAlert } from '@/api/monitor'
@@ -207,9 +209,9 @@ const onFilterChange = () => {
 
 const onAck = async (row) => {
   try {
-    await ElMessageBox.confirm(row.message, $t('monitor.alerts.ackConfirm'), {
-      confirmButtonText: $t('monitor.alerts.ack'),
-      cancelButtonText: $t('monitor.dashboard.refresh') && '取消',
+    await ElMessageBox.confirm(row.message, t('monitor.alerts.ackConfirm'), {
+      confirmButtonText: t('monitor.alerts.ack'),
+      cancelButtonText: t('common.cancel'),
       type: 'warning',
     })
   } catch {
@@ -217,7 +219,7 @@ const onAck = async (row) => {
   }
   try {
     await acknowledgeAlert(row.id)
-    ElMessage.success($t('monitor.alerts.opSuccess'))
+    ElMessage.success(t('monitor.alerts.opSuccess'))
     fetchAlerts()
   } catch {
     /* 错误提示由拦截器统一处理 */
@@ -227,7 +229,7 @@ const onAck = async (row) => {
 const onResolve = async (row) => {
   try {
     await resolveAlert(row.id)
-    ElMessage.success($t('monitor.alerts.opSuccess'))
+    ElMessage.success(t('monitor.alerts.opSuccess'))
     fetchAlerts()
   } catch {
     /* 错误提示由拦截器统一处理 */

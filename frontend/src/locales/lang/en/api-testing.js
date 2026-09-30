@@ -200,7 +200,7 @@ export default {
     jsonPathExpression: 'JSON path expression',
     jsonPathExample: 'Enter JSONPath expression, e.g.: $.data.users[0].name',
     extractResult: 'Extracted result:',
-    actual: 'Actual:',
+
     importCurlCommand: 'Import cURL Command',
     pasteCurlCommand: 'Paste cURL command here, e.g.: curl -X POST https://api.example.com/users -H \'Content-Type: application/json\' -d \'{"name":"test"}\'',
     parseAndImport: 'Parse and Import',
@@ -666,12 +666,12 @@ export default {
       categories: {
         randomNumber: 'Random Numbers',
         testData: 'Test Data',
-        string: 'String',
+
         encodingConversion: 'Encoding Conversion',
-        encryption: 'Encryption',
+
         datetime: 'Date & Time',
-        crontab: 'Crontab',
-        uncategorized: 'Uncategorized',
+
+
         // English category name mapping (for API returned English category names)
         'random numbers': 'Random Numbers',
         'test data': 'Test Data',

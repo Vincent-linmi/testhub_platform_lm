@@ -10,6 +10,7 @@ import i18n from './locales'
 import App from './App.vue'
 import router from './router'
 import './assets/css/global.scss'
+import './assets/css/list-page.scss'
 
 // Axios 基础配置
 axios.defaults.xsrfCookieName = 'csrftoken';

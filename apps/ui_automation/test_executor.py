@@ -22,16 +22,17 @@ from .models import (
     TestCaseExecution, Element
 )
 from .variable_resolver import resolve_variables
+from .test_file_utils import materialized_test_files
 
 
 class TestExecutor:
     """测试执行器基类"""
 
-    def __init__(self, test_suite, engine='playwright', browser='chrome', headless=False, executed_by=None):
+    def __init__(self, test_suite, engine='playwright', browser='chrome', headless=True, executed_by=None):
         self.test_suite = test_suite
         self.engine = engine
         self.browser = browser
-        self.headless = headless
+        self.headless = True  # 服务端执行固定无头；有头模式由本机执行器提供。
         self.executed_by = executed_by
         self.execution = None
         self.test_cases = []
@@ -112,6 +113,10 @@ class TestExecutor:
             self.get_test_cases()
             print(f"[TestExecutor] 获取到 {len(self.test_cases)} 个测试用例")
 
+            if any(case.data_driven_enabled for case in self.test_cases):
+                self.run_data_driven()
+                return
+
             # 根据引擎选择执行方式
             print(f"[TestExecutor] 使用引擎: {self.engine}")
             if self.engine == 'playwright':
@@ -138,6 +143,43 @@ class TestExecutor:
             print(f"[TestExecutor] 关闭数据库连接...")
             connection.close()
             print(f"[TestExecutor] 执行器已退出")
+
+    def run_data_driven(self):
+        from .data_driven import execute_rows
+        import json
+        import uuid
+        started = time.time()
+        batch_id = uuid.uuid4()
+        passed = failed = 0
+        for case in self.test_cases:
+            try:
+                executions = execute_rows(
+                    case, self.executed_by, engine=self.engine, browser=self.browser,
+                    headless=self.headless, source='suite', suite=self.test_suite, batch_id=batch_id,
+                )
+            except Exception as exc:
+                now = timezone.now()
+                executions = [TestCaseExecution.objects.create(
+                    test_case=case, project=case.project, created_by=self.executed_by,
+                    test_suite=self.test_suite, execution_source='suite', status='error',
+                    engine=self.engine, browser=self.browser, headless=self.headless,
+                    batch_id=batch_id, started_at=now, finished_at=now,
+                    error_message=str(exc), execution_logs='[]',
+                )]
+            for execution in executions:
+                passed += execution.status == 'passed'
+                failed += execution.status != 'passed'
+                suffix = f' [数据行 {execution.data_index}]' if execution.data_index is not None else ''
+                self.results.append({
+                    'test_case_id': case.id, 'test_case_name': case.name + suffix,
+                    'execution_id': execution.id, 'data_index': execution.data_index,
+                    'status': execution.status, 'steps': json.loads(execution.execution_logs or '[]'),
+                    'error': execution.error_message, 'screenshots': execution.screenshots,
+                    'start_time': execution.started_at.isoformat(),
+                    'end_time': execution.finished_at.isoformat(),
+                })
+        self.update_execution_result('SUCCESS' if not failed else 'FAILED',
+                                     passed, failed, 0, time.time() - started)
 
     def run_with_playwright(self):
         """使用 Playwright 执行测试（同步版本）"""
@@ -215,11 +257,15 @@ class TestExecutor:
                 'id': test_case.id,
                 'name': test_case.name,
                 'project_id': self.test_suite.project.id,
+                'global_wait_enabled': test_case.global_wait_enabled,
+                'global_wait_time': test_case.global_wait_time,
                 'steps': []
             }
 
             # 获取步骤并预先加载所有相关数据
-            steps = test_case.steps.select_related('element', 'element__locator_strategy').order_by('step_number')
+            steps = test_case.steps.select_related(
+                'element', 'element__locator_strategy', 'file_asset'
+            ).prefetch_related('file_assets').order_by('step_number')
             for step in steps:
                 step_data = {
                     'id': step.id,
@@ -230,6 +276,8 @@ class TestExecutor:
                     'wait_time': step.wait_time,
                     'assert_type': step.assert_type,
                     'assert_value': step.assert_value,
+                    'file_asset': step.file_asset,
+                    'file_assets': list(step.file_assets.all()) or ([step.file_asset] if step.file_asset else []),
                     'element': None
                 }
 
@@ -239,8 +287,12 @@ class TestExecutor:
                         'id': step.element.id,
                         'name': step.element.name,
                         'locator_value': step.element.locator_value,
-                        'locator_strategy': step.element.locator_strategy.name if step.element.locator_strategy else 'css'
+                        'locator_strategy': step.element.locator_strategy.name if step.element.locator_strategy else 'css',
+                        'wait_timeout': step.element.wait_timeout,
                     }
+                    step_data['wait_time'] = step.element.wait_timeout * 1000
+                elif step.action_type == 'assert':
+                    step_data['wait_time'] = 60_000
 
                 case_data['steps'].append(step_data)
 
@@ -433,7 +485,7 @@ class TestExecutor:
         try:
             # 遍历预先准备好的步骤数据
             just_switched_tab = False  # 跟踪是否刚切换了标签页
-            for step_data in case_data['steps']:
+            for step_index, step_data in enumerate(case_data['steps']):
                 # 如果刚切换了标签页，传递这个信息
                 step_data['_just_switched_tab'] = just_switched_tab
                 just_switched_tab = False  # 重置标志
@@ -466,6 +518,10 @@ class TestExecutor:
                         self.current_page.wait_for_timeout(800)  # 等待800ms，确保下拉框完全展开
                     else:
                         self.current_page.wait_for_timeout(300)  # 其他操作等待300ms
+
+                if (step_result['success'] and case_data.get('global_wait_enabled')
+                        and step_index < len(case_data['steps']) - 1):
+                    self.current_page.wait_for_timeout(case_data['global_wait_time'])
 
                 # 如果步骤失败，捕获失败截图
                 if not step_result['success']:
@@ -590,9 +646,13 @@ class TestExecutor:
 
         try:
             # 遍历预先准备好的步骤数据
-            for step_data in case_data['steps']:
+            for step_index, step_data in enumerate(case_data['steps']):
                 step_result = self.execute_step_playwright(step_data)
                 result['steps'].append(step_result)
+
+                if (step_result['success'] and case_data.get('global_wait_enabled')
+                        and step_index < len(case_data['steps']) - 1):
+                    self.current_page.wait_for_timeout(case_data['global_wait_time'])
 
                 if not step_result['success']:
                     result['status'] = 'failed'
@@ -895,6 +955,22 @@ class TestExecutor:
                                 self.current_page.click(selector, timeout=step_data['wait_time'])
                             step_result['success'] = True
 
+                elif step_data['action_type'] == 'uploadFile':
+                    assets = step_data.get('file_assets') or ([step_data.get('file_asset')] if step_data.get('file_asset') else [])
+                    with materialized_test_files(assets) as file_paths:
+                        locator = self.current_page.locator(selector)
+                        input_type = locator.get_attribute('type')
+                        if (input_type or '').lower() == 'file':
+                            locator.set_input_files(file_paths, timeout=step_data['wait_time'])
+                        else:
+                            with self.current_page.expect_file_chooser(
+                                timeout=step_data['wait_time']
+                            ) as chooser_info:
+                                locator.click(timeout=step_data['wait_time'])
+                            chooser_info.value.set_files(file_paths)
+                    step_result['result'] = f"已选择 {len(assets)} 个文件: {'、'.join(asset.name for asset in assets)}"
+                    step_result['success'] = True
+
                 elif step_data['action_type'] == 'fill':
                     # 解析输入值中的变量表达式
                     resolved_value = resolve_variables(step_data['input_value'])
@@ -937,6 +1013,13 @@ class TestExecutor:
                         # 普通元素：等待可见
                         self.current_page.wait_for_selector(selector, timeout=step_data['wait_time'])
 
+                    step_result['success'] = True
+
+                elif step_data['action_type'] == 'waitForEnabled':
+                    self.current_page.locator(selector).click(
+                        trial=True,
+                        timeout=step_data['wait_time']
+                    )
                     step_result['success'] = True
 
                 elif step_data['action_type'] == 'hover':
@@ -1303,11 +1386,15 @@ class TestExecutor:
                 'id': test_case.id,
                 'name': test_case.name,
                 'project_id': self.test_suite.project.id,
+                'global_wait_enabled': test_case.global_wait_enabled,
+                'global_wait_time': test_case.global_wait_time,
                 'steps': []
             }
 
             # 获取步骤并预先加载所有相关数据
-            steps = test_case.steps.select_related('element', 'element__locator_strategy').order_by('step_number')
+            steps = test_case.steps.select_related(
+                'element', 'element__locator_strategy', 'file_asset'
+            ).prefetch_related('file_assets').order_by('step_number')
             for step in steps:
                 step_data = {
                     'id': step.id,
@@ -1318,6 +1405,8 @@ class TestExecutor:
                     'wait_time': step.wait_time,
                     'assert_type': step.assert_type,
                     'assert_value': step.assert_value,
+                    'file_asset': step.file_asset,
+                    'file_assets': list(step.file_assets.all()) or ([step.file_asset] if step.file_asset else []),
                     'element': None
                 }
 
@@ -1327,8 +1416,12 @@ class TestExecutor:
                         'id': step.element.id,
                         'name': step.element.name,
                         'locator_value': step.element.locator_value,
-                        'locator_strategy': step.element.locator_strategy.name if step.element.locator_strategy else 'css'
+                        'locator_strategy': step.element.locator_strategy.name if step.element.locator_strategy else 'css',
+                        'wait_timeout': step.element.wait_timeout,
                     }
+                    step_data['wait_time'] = step.element.wait_timeout * 1000
+                elif step.action_type == 'assert':
+                    step_data['wait_time'] = 60_000
 
                 case_data['steps'].append(step_data)
 
@@ -1772,7 +1865,7 @@ class TestExecutor:
 
         try:
             # 遍历预先准备好的步骤数据
-            for step_data in case_data['steps']:
+            for step_index, step_data in enumerate(case_data['steps']):
                 step_result = self.execute_step_selenium(driver, step_data)
                 result['steps'].append(step_result)
 
@@ -1784,6 +1877,10 @@ class TestExecutor:
                         time.sleep(0.8)  # 等待800ms，确保下拉框完全展开
                     else:
                         time.sleep(0.3)  # 其他操作等待300ms
+
+                if (step_result['success'] and case_data.get('global_wait_enabled')
+                        and step_index < len(case_data['steps']) - 1):
+                    time.sleep(case_data['global_wait_time'] / 1000)
 
                 # 如果步骤失败,捕获失败截图
                 if not step_result['success']:
@@ -1855,9 +1952,13 @@ class TestExecutor:
 
         try:
             # 遍历预先准备好的步骤数据
-            for step_data in case_data['steps']:
+            for step_index, step_data in enumerate(case_data['steps']):
                 step_result = self.execute_step_selenium(driver, step_data)
                 result['steps'].append(step_result)
+
+                if (step_result['success'] and case_data.get('global_wait_enabled')
+                        and step_index < len(case_data['steps']) - 1):
+                    time.sleep(case_data['global_wait_time'] / 1000)
 
                 if not step_result['success']:
                     result['status'] = 'failed'
@@ -2120,6 +2221,27 @@ class TestExecutor:
                             else:
                                 raise
 
+                elif step_data['action_type'] == 'waitForEnabled':
+                    wait.until(EC.element_to_be_clickable((by, locator_value)))
+                    step_result['success'] = True
+
+                elif step_data['action_type'] == 'uploadFile':
+                    assets = step_data.get('file_assets') or ([step_data.get('file_asset')] if step_data.get('file_asset') else [])
+                    element_obj = wait.until(EC.presence_of_element_located((by, locator_value)))
+                    tag_name = (element_obj.tag_name or '').lower()
+                    input_type = (element_obj.get_attribute('type') or '').lower()
+                    if tag_name != 'input' or input_type != 'file':
+                        raise ValueError(
+                            'Selenium 上传文件必须定位到 input[type=file]；'
+                            '自定义上传按钮请使用 Playwright 引擎'
+                        )
+                    if len(assets) > 1 and element_obj.get_attribute('multiple') is None:
+                        raise ValueError('目标文件输入框不支持多文件选择（缺少 multiple 属性）')
+                    with materialized_test_files(assets) as file_paths:
+                        element_obj.send_keys('\n'.join(file_paths))
+                    step_result['result'] = f"已选择 {len(assets)} 个文件: {'、'.join(asset.name for asset in assets)}"
+                    step_result['success'] = True
+
                 elif step_data['action_type'] == 'fill':
                     # 先定位元素
                     element_obj = wait.until(EC.presence_of_element_located((by, locator_value)))
@@ -2347,6 +2469,8 @@ class TestExecutor:
                     error_parts.append(f"等待输入框可用失败（超时{timeout_seconds}秒）")
                 elif action_type_str == 'waitFor':
                     error_parts.append(f"等待元素出现失败（超时{timeout_seconds}秒）")
+                elif action_type_str == 'waitForEnabled':
+                    error_parts.append(f"等待元素可点击失败（超时{timeout_seconds}秒）")
 
             # 合并所有错误信息
             error_msg = '\n'.join(error_parts)

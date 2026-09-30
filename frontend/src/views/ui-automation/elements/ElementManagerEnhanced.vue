@@ -192,6 +192,7 @@
               <el-form-item :label="$t('uiAutomation.common.description')">
                 <el-input v-model="selectedElement.description" type="textarea" :rows="3" :placeholder="$t('uiAutomation.element.descriptionPlaceholder')" />
               </el-form-item>
+
             </el-form>
           </div>
         </div>
@@ -456,7 +457,7 @@ const exposeToWindow = () => {
       projects,
       selectedElement,
       loadElementTree,
-      treeRef: typeof treeRef !== 'undefined' ? treeRef : null,
+      treeRef,
       expandedKeys,
       pages,
       $vm: { // 当前组件实例
@@ -749,7 +750,7 @@ const createEmptyElement = () => {
     component_name: '',
     locator_strategy_id: null, // 使用null而不是空字符串
     locator_value: '',
-    wait_timeout: 5,
+    wait_timeout: 60,
     force_action: false,  // 强制操作选项，默认禁用
     description: ''
   }

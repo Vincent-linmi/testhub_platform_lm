@@ -2,9 +2,15 @@
 Selenium自动化测试执行引擎
 用于驱动真实浏览器执行UI自动化测试
 """
+from local_playwright_agent.step_runtime import (
+    EXTENDED_ACTIONS, PAGE_ASSERTIONS, prepare_contract,
+    playwright_locator, execute_playwright_extension, resolve_timeout_ms,
+)
 import base64
 import time
+from .selenium_step_runtime import execute_selenium_extension
 from .variable_resolver import resolve_variables
+from .test_file_utils import get_step_file_assets, materialized_test_files
 import os
 import shutil
 from datetime import datetime
@@ -33,6 +39,7 @@ class SeleniumTestEngine:
         """
         self.browser_type = browser_type
         self.headless = headless
+        self.runtime_variables = {}
         self.driver = None
 
     @staticmethod
@@ -414,19 +421,33 @@ class SeleniumTestEngine:
         print(f"\n🔵 开始执行步骤: action_type={step.action_type}")
         action_type = step.action_type
         
-        # 预先解析变量
-        resolved_input_value = step.input_value
-        if step.input_value:
-            resolved_input_value = resolve_variables(step.input_value)
-            
-        resolved_assert_value = step.assert_value
-        if step.assert_value:
-            resolved_assert_value = resolve_variables(step.assert_value)
-            
         start_time = time.time()
         screenshot_base64 = None
-
+        element_name = (element_data or {}).get('name', '页面')
+        element_data = element_data or {}
+        locator_strategy = element_data.get('locator_strategy', 'css')
+        locator_value = element_data.get('locator_value', '')
+        timeout_seconds = (step.wait_time or 1000) / 1000
         try:
+            step_contract = prepare_contract({
+                'action_type': action_type, 'input_value': step.input_value,
+                'assert_type': step.assert_type, 'assert_value': step.assert_value,
+            }, self.runtime_variables, resolve_variables)
+            resolved_input_value = step_contract['input_value']
+            resolved_assert_value = step_contract['assert_value']
+            if action_type in EXTENDED_ACTIONS:
+                page_assertion = action_type == 'assert' and step.assert_type in PAGE_ASSERTIONS
+                if not page_assertion and not element_data.get('locator_value'):
+                    raise ValueError(f'操作 {action_type} 缺少元素定位器')
+                timeout = resolve_timeout_ms(
+                    None if page_assertion else element_data,
+                    None if action_type == 'assert' else step.wait_time,
+                )
+                message = execute_selenium_extension(
+                    self.driver, self._get_locator, element_data, step_contract,
+                    self.runtime_variables, timeout)
+                return True, message, None
+
             # wait和screenshot操作不需要元素定位器
             if action_type == 'wait':
                 wait_seconds = step.wait_time / 1000 if step.wait_time else 1
@@ -514,13 +535,7 @@ class SeleniumTestEngine:
             force_action = element_data.get('force_action', False)
 
             # 计算超时时间
-            element_wait_timeout = element_data.get('wait_timeout')
-            if element_wait_timeout is not None and element_wait_timeout > 0:
-                timeout_seconds = element_wait_timeout
-            elif step.wait_time:
-                timeout_seconds = step.wait_time / 1000
-            else:
-                timeout_seconds = 5
+            timeout_seconds = resolve_timeout_ms(element_data, step.wait_time) / 1000
 
             # 获取定位器
             by_type, by_value = self._get_locator(locator_strategy, locator_value)
@@ -552,6 +567,30 @@ class SeleniumTestEngine:
             # 执行操作（添加 stale element 重试机制）
             execution_time = 0
             max_retries = 3
+
+            if action_type == 'uploadFile':
+                tag_name = (element.tag_name or '').lower()
+                input_type = (element.get_attribute('type') or '').lower()
+                if tag_name != 'input' or input_type != 'file':
+                    raise ValueError(
+                        'Selenium 上传文件必须将目标元素定位到 input[type=file]；'
+                        '自定义“从设备添加”按钮请使用 Playwright 引擎'
+                    )
+
+                assets = get_step_file_assets(step)
+                if len(assets) > 1 and element.get_attribute('multiple') is None:
+                    raise ValueError('目标文件输入框不支持多文件选择（缺少 multiple 属性）')
+
+                with materialized_test_files(assets) as file_paths:
+                    element.send_keys('\n'.join(file_paths))
+
+                execution_time = round(time.time() - start_time, 2)
+                file_names = '、'.join(asset.name for asset in assets)
+                log = f"✓ 一次选择 {len(assets)} 个上传文件成功: {file_names}\n"
+                log += f"  - 目标元素: '{element_name}'\n"
+                log += f"  - 定位器: {locator_strategy}={locator_value}\n"
+                log += f"  - 执行时间: {execution_time}秒"
+                return True, log, None
 
             if action_type == 'click':
                 for attempt in range(max_retries):
@@ -683,37 +722,20 @@ class SeleniumTestEngine:
                         else:
                             raise
 
-            elif action_type == 'getText':
-                # 获取文本（添加 stale element 重试）
-                from selenium.common.exceptions import StaleElementReferenceException
-                for attempt in range(max_retries):
-                    try:
-                        text = element.text
-                        execution_time = round(time.time() - start_time, 2)
-                        log = f"✓ 获取元素 '{element_name}' 的文本成功\n"
-                        log += f"  - 定位器: {locator_strategy}={locator_value}\n"
-                        log += f"  - 文本内容: '{text}'\n"
-                        log += f"  - 超时设置: {timeout_seconds}秒\n"
-                        log += f"  - 执行时间: {execution_time}秒"
-                        return True, log, None
-                    except StaleElementReferenceException:
-                        if attempt < max_retries - 1:
-                            logger.warning(f"⚠️ 元素过期（Stale Element），正在重试... (尝试 {attempt + 2}/{max_retries})")
-                            # 增加等待时间，让页面 DOM 稳定
-                            wait_time = 1.0 if attempt == 0 else 1.5
-                            logger.info(f"等待 {wait_time}秒 让页面稳定...")
-                            time.sleep(wait_time)
-                            element = wait.until(EC.presence_of_element_located((by_type, by_value)))
-                            time.sleep(0.3)  # 确保元素状态稳定
-                            logger.info(f"✓ 元素重新定位成功")
-                        else:
-                            raise
-
             elif action_type == 'waitFor':
                 # 等待元素可见
                 wait.until(EC.visibility_of_element_located((by_type, by_value)))
                 execution_time = round(time.time() - start_time, 2)
                 log = f"✓ 等待元素 '{element_name}' 出现成功\n"
+                log += f"  - 定位器: {locator_strategy}={locator_value}\n"
+                log += f"  - 超时设置: {timeout_seconds}秒\n"
+                log += f"  - 等待时间: {execution_time}秒"
+                return True, log, None
+
+            elif action_type == 'waitForEnabled':
+                wait.until(EC.element_to_be_clickable((by_type, by_value)))
+                execution_time = round(time.time() - start_time, 2)
+                log = f"✓ 等待元素 '{element_name}' 可点击成功\n"
                 log += f"  - 定位器: {locator_strategy}={locator_value}\n"
                 log += f"  - 超时设置: {timeout_seconds}秒\n"
                 log += f"  - 等待时间: {execution_time}秒"
@@ -759,65 +781,9 @@ class SeleniumTestEngine:
                 log += f"  - 执行时间: {execution_time}秒"
                 return True, log, None
 
-            elif action_type == 'assert':
-                # 根据断言类型执行不同的断言
-                if step.assert_type == 'textContains':
-                    text = element.text
-                    if resolved_assert_value in text:
-                        log = f"✓ 断言通过: 文本包含 '{resolved_assert_value}'\n"
-                        if resolved_assert_value != step.assert_value:
-                                log += f"  - 变量解析: '{step.assert_value}' => '{resolved_assert_value}'\n"
-                        log += f"  - 实际文本: '{text}'\n"
-                        log += f"  - 超时设置: {timeout_seconds}秒"
-                        return True, log, None
-                    else:
-                        log = f"✗ 断言失败: 文本不包含 '{resolved_assert_value}'\n"
-                        if resolved_assert_value != step.assert_value:
-                                log += f"  - 变量解析: '{step.assert_value}' => '{resolved_assert_value}'\n"
-                        log += f"  - 实际文本: '{text}'"
-                        screenshot = self.driver.get_screenshot_as_png()
-                        screenshot_base64 = f"data:image/png;base64,{base64.b64encode(screenshot).decode()}"
-                        return False, log, screenshot_base64
-
-                elif step.assert_type == 'textEquals':
-                    text = element.text
-                    if text == resolved_assert_value:
-                        log = f"✓ 断言通过: 文本等于 '{resolved_assert_value}'\n"
-                        if resolved_assert_value != step.assert_value:
-                                log += f"  - 变量解析: '{step.assert_value}' => '{resolved_assert_value}'\n"
-                        log += f"  - 超时设置: {timeout_seconds}秒"
-                        return True, log, None
-                    else:
-                        log = f"✗ 断言失败: 文本不等于 '{resolved_assert_value}'\n"
-                        if resolved_assert_value != step.assert_value:
-                                log += f"  - 变量解析: '{step.assert_value}' => '{resolved_assert_value}'\n"
-                        log += f"  - 期望: '{resolved_assert_value}'\n"
-                        log += f"  - 实际: '{text}'"
-                        screenshot = self.driver.get_screenshot_as_png()
-                        screenshot_base64 = f"data:image/png;base64,{base64.b64encode(screenshot).decode()}"
-                        return False, log, screenshot_base64
-
-                elif step.assert_type == 'isVisible':
-                    is_visible = element.is_displayed()
-                    if is_visible:
-                        log = f"✓ 断言通过: 元素 '{element_name}' 可见"
-                        return True, log, None
-                    else:
-                        log = f"✗ 断言失败: 元素 '{element_name}' 不可见"
-                        screenshot = self.driver.get_screenshot_as_png()
-                        screenshot_base64 = f"data:image/png;base64,{base64.b64encode(screenshot).decode()}"
-                        return False, log, screenshot_base64
-
-                elif step.assert_type == 'exists':
-                    # 元素已经找到，说明存在
-                    log = f"✓ 断言通过: 元素 '{element_name}' 存在"
-                    return True, log, None
-
-
-
             else:
-                log = f"⚠ 未知的操作类型: {action_type}"
-                return True, log, None
+                log = f"不支持的操作类型: {action_type}"
+                return False, log, None
 
         except TimeoutException as e:
             execution_time = round(time.time() - start_time, 2)
@@ -912,6 +878,8 @@ class SeleniumTestEngine:
                     error_parts.append(f"等待输入框可用失败（超时{timeout_seconds}秒）")
                 elif action_type == 'waitFor':
                     error_parts.append(f"等待元素出现失败（超时{timeout_seconds}秒）")
+                elif action_type == 'waitForEnabled':
+                    error_parts.append(f"等待元素可点击失败（超时{timeout_seconds}秒）")
             
             # 合并所有错误信息
             error_msg = '\n'.join(error_parts)

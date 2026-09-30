@@ -514,6 +514,21 @@ def get_ui_execution(ctx: Context, execution_id: int) -> dict:
                 for shot in (execution.screenshots or []) if isinstance(shot, dict)
             ],
         }
+        if execution.batch_id:
+            from apps.ui_automation.data_driven import execution_response
+            from apps.ui_automation.models import TestCaseExecution
+            result['batch_id'] = str(execution.batch_id)
+            result['data_index'] = execution.data_index
+            if execution.data_index is None:
+                result['data_results'] = []
+                for row in TestCaseExecution.objects.filter(
+                    batch_id=execution.batch_id, test_case=execution.test_case,
+                    data_index__isnull=False,
+                ).order_by('data_index'):
+                    item = execution_response(row)
+                    item['screenshots'] = [{k: v for k, v in shot.items() if k != 'url'}
+                                           for shot in item['screenshots'] if isinstance(shot, dict)]
+                    result['data_results'].append(item)
         if raw_logs:
             result['raw_logs'] = raw_logs[:2000]
         if execution.status in ('running', 'pending'):

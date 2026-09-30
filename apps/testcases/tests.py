@@ -2,12 +2,16 @@ from rest_framework import status
 from rest_framework.test import APIClient, APITestCase
 
 from apps.projects.models import Project, ProjectMember
-from apps.testcases.models import TestCase as TCModel, TestCaseStep, TestCaseComment
+from apps.testcases.models import (
+    TestCase as TCModel, TestCaseComment, TestCaseGroup, TestCaseStep,
+)
 from apps.users.models import User
 
 # 注意：testcase-list / testcase-detail URL name 与 ui_automation 模块的 router 冲突，
 # 这里直接使用路径常量以避免 reverse() 解析到错误的路由。
 TC_LIST_URL = '/api/testcases/'
+TC_GROUP_LIST_URL = '/api/testcases/groups/'
+TC_BATCH_GROUP_URL = '/api/testcases/groups/assign/'
 
 
 def tc_detail_url(pk):
@@ -129,3 +133,94 @@ class TestCaseApiTests(APITestCase):
         response = self.client.get(self.list_url)
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(len(response.data['results']), 0)
+
+    def test_create_group_and_assign_when_creating_testcase(self):
+        """可在项目内创建分组，并在创建用例时归入该分组。"""
+        group_response = self.client.post(TC_GROUP_LIST_URL, {
+            'project_id': self.project.id,
+            'name': '登录模块',
+        }, format='json')
+        self.assertEqual(group_response.status_code, status.HTTP_201_CREATED)
+
+        response = self.client.post(self.list_url, {
+            'title': '登录分组用例',
+            'expected_result': '登录成功',
+            'project_id': self.project.id,
+            'group_id': group_response.data['id'],
+        }, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        testcase = TCModel.objects.get(pk=response.data['id'])
+        self.assertEqual(testcase.group_id, group_response.data['id'])
+
+    def test_filter_grouped_and_ungrouped_testcases(self):
+        """列表可按分组或未分组筛选。"""
+        group = TestCaseGroup.objects.create(project=self.project, name='支付模块')
+        TCModel.objects.create(
+            title='已分组用例', expected_result='通过', project=self.project,
+            author=self.user, group=group,
+        )
+        TCModel.objects.create(
+            title='未分组用例', expected_result='通过', project=self.project,
+            author=self.user,
+        )
+
+        grouped_response = self.client.get(self.list_url, {'group': group.id})
+        ungrouped_response = self.client.get(self.list_url, {'group': 'ungrouped'})
+
+        self.assertEqual(grouped_response.data['count'], 1)
+        self.assertEqual(grouped_response.data['results'][0]['group']['id'], group.id)
+        self.assertEqual(ungrouped_response.data['count'], 1)
+        self.assertIsNone(ungrouped_response.data['results'][0]['group'])
+
+    def test_batch_move_testcases_to_group(self):
+        """选中的用例可批量移入同项目分组。"""
+        group = TestCaseGroup.objects.create(project=self.project, name='批量分组')
+        testcases = [
+            TCModel.objects.create(
+                title=f'批量用例{i}', expected_result='通过',
+                project=self.project, author=self.user,
+            )
+            for i in range(2)
+        ]
+
+        response = self.client.post(TC_BATCH_GROUP_URL, {
+            'testcase_ids': [testcase.id for testcase in testcases],
+            'group_id': group.id,
+        }, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['updated_count'], 2)
+        self.assertEqual(TCModel.objects.filter(group=group).count(), 2)
+
+    def test_cannot_assign_group_from_another_project(self):
+        """用例不能归入其他项目的分组。"""
+        other_project = Project.objects.create(name='其他项目', owner=self.user)
+        other_group = TestCaseGroup.objects.create(project=other_project, name='其他分组')
+        testcase = TCModel.objects.create(
+            title='当前项目用例', expected_result='通过',
+            project=self.project, author=self.user,
+        )
+
+        response = self.client.post(TC_BATCH_GROUP_URL, {
+            'testcase_ids': [testcase.id],
+            'group_id': other_group.id,
+        }, format='json')
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        testcase.refresh_from_db()
+        self.assertIsNone(testcase.group_id)
+
+    def test_delete_group_keeps_testcases_as_ungrouped(self):
+        """删除分组不会删除其中的测试用例。"""
+        group = TestCaseGroup.objects.create(project=self.project, name='待删除分组')
+        testcase = TCModel.objects.create(
+            title='保留用例', expected_result='通过', project=self.project,
+            author=self.user, group=group,
+        )
+
+        response = self.client.delete(f'{TC_GROUP_LIST_URL}{group.id}/')
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        testcase.refresh_from_db()
+        self.assertIsNone(testcase.group_id)

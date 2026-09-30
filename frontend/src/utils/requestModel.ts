@@ -1,4 +1,14 @@
-import * as curlconverter from 'curlconverter'
+
+interface HarField { name: string; value?: string; fileName?: string }
+interface HarRequest {
+  url: string
+  method?: string
+  queryString?: HarField[]
+  cookies?: HarField[]
+  headers: Array<{ name: string; value: string }>
+  postData?: { text?: string; params?: HarField[] }
+}
+interface HarDocument { log?: { entries?: Array<{ request: HarRequest }> } }
 
 export interface RequestModel {
   method: string
@@ -52,8 +62,9 @@ export interface Auth {
 export class RequestModelParser {
   static async parseCurl(curlCommand: string): Promise<RequestModel> {
     try {
+      const curlconverter = await import('curlconverter')
       const harData = curlconverter.toHarString(curlCommand)
-      const har = JSON.parse(harData)
+      const har = JSON.parse(harData) as HarDocument
       
       if (!har.log || !har.log.entries || har.log.entries.length === 0) {
         throw new Error('无法解析CURL命令，请检查格式')
@@ -72,7 +83,7 @@ export class RequestModelParser {
       const query: QueryParam[] = []
       
       if (request.queryString && request.queryString.length > 0) {
-        request.queryString.forEach((param: any) => {
+        request.queryString.forEach((param) => {
           query.push({ key: param.name, value: param.value || '', enabled: true })
         })
       } else {
@@ -87,12 +98,12 @@ export class RequestModelParser {
       
       if (request.cookies && request.cookies.length > 0) {
         const cookieValue = request.cookies
-          .map((cookie: any) => `${cookie.name}=${cookie.value}`)
+          .map((cookie) => `${cookie.name}=${cookie.value}`)
           .join('; ')
         headers.push({ key: 'Cookie', value: cookieValue, enabled: true })
       }
       
-      request.headers.forEach((header: any) => {
+      request.headers.forEach((header) => {
         headers.push({ key: header.name, value: header.value, enabled: true })
       })
       
@@ -112,7 +123,7 @@ export class RequestModelParser {
           body.mode = 'urlencoded'
           body.urlencoded = []
           if (postData.params) {
-            postData.params.forEach((param: any) => {
+            postData.params.forEach((param) => {
               body.urlencoded?.push({ 
                 key: param.name, 
                 value: param.value || '', 
@@ -125,7 +136,7 @@ export class RequestModelParser {
           body.mode = 'formdata'
           body.formdata = []
           if (postData.params) {
-            postData.params.forEach((param: any) => {
+            postData.params.forEach((param) => {
               body.formdata?.push({
                 key: param.name,
                 value: param.value || param.fileName || '',
@@ -150,10 +161,9 @@ export class RequestModelParser {
         auth: RequestModelParser.parseAuth(headers),
         timeout: 30000
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('Failed to parse cURL command:', error)
-      console.error('cURL command:', curlCommand)
-      const errorMessage = error?.message || error?.toString() || 'Unknown error'
+      const errorMessage = error instanceof Error ? error.message : String(error)
       throw new Error(`cURL命令解析失败: ${errorMessage}，请检查命令格式`)
     }
   }
@@ -233,7 +243,7 @@ export class RequestModelParser {
       model.body.formdata.forEach(field => {
         if (field.enabled && field.key) {
           if (field.type === 'file' && field.value) {
-            formData.append(field.key, field.value as any)
+            formData.append(field.key, field.value)
           } else {
             formData.append(field.key, field.value)
           }

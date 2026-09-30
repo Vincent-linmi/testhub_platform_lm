@@ -858,46 +858,11 @@
       @select="handleDataFactorySelect"
     />
 
-    <!-- 变量助手对话框 -->
-    <el-dialog
-      :close-on-press-escape="false"
-      :modal="true"
-      :destroy-on-close="false"
+    <VariableHelperDialog
       v-model="showVariableHelper"
-      :title="$t('apiTesting.interface.variableHelper') + ' (点击插入)'"
-      :close-on-click-modal="false"
-      width="900px"
-    >
-      <div v-if="variableCategories.length === 0" style="padding: 20px; text-align: center; color: #999;">
-        <p>{{ $t('apiTesting.interface.variableCategoriesLoading') }}</p>
-        <p>{{ $t('apiTesting.interface.variableCategoriesCount', { count: variableCategories.length }) }}</p>
-      </div>
-      <el-tabs v-else tab-position="left" style="height: 450px">
-        <el-tab-pane
-          v-for="(category, index) in variableCategories"
-          :key="index"
-          :label="category.label"
-        >
-          <div style="height: 450px; overflow-y: auto; padding: 10px;">
-            <el-table :data="category.variables" style="width: 100%" @row-click="insertVariable" highlight-current-row>
-              <el-table-column prop="name" :label="$t('apiTesting.interface.functionName')" width="150">
-                <template #default="{ row }">
-                  <el-tag size="small">{{ row.name }}</el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column prop="desc" :label="$t('apiTesting.interface.description')" min-width="150" />
-              <el-table-column prop="syntax" :label="$t('apiTesting.interface.syntax')" min-width="200" show-overflow-tooltip />
-              <el-table-column prop="example" :label="$t('apiTesting.interface.example')" min-width="200" show-overflow-tooltip />
-              <el-table-column :label="$t('apiTesting.interface.operation')" width="80" fixed="right">
-                <template #default="{ row }">
-                  <el-button link type="primary" size="small">{{ $t('apiTesting.interface.insert') }}</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-          </div>
-        </el-tab-pane>
-      </el-tabs>
-    </el-dialog>
+      :categories="variableCategories"
+      @select="insertVariable"
+    />
 
     <!-- CURL导入对话框 -->
     <el-dialog
@@ -977,10 +942,10 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Folder, Document, MagicStick, Search, Close, CopyDocument, Delete } from '@element-plus/icons-vue'
 import api from '@/utils/api'
 import KeyValueEditor from './components/KeyValueEditor.vue'
+import VariableHelperDialog from './components/VariableHelperDialog.vue'
 import DataFactorySelector from '@/components/DataFactorySelector.vue'
 import { RequestModelParser } from '@/utils/requestModel'
 import { getVariableFunctions } from '@/api/data-factory'
-import { CodeGenerator } from '@/utils/codeGenerator'
 import { debounce } from 'lodash-es'
 import { useI18n } from 'vue-i18n'
 
@@ -1190,17 +1155,6 @@ const buildTree = (items) => {
   return roots
 }
 
-const findCollectionById = (collections, id) => {
-  for (const collection of collections) {
-    if (collection.id === id) return collection
-    if (collection.children) {
-      const found = findCollectionById(collection.children, id)
-      if (found) return found
-    }
-  }
-  return null
-}
-
 const clearCollectionChildren = (collection) => {
   if (collection.children) {
     collection.children = collection.children.filter(child => child.type === 'collection')
@@ -1223,11 +1177,19 @@ const loadRequests = async () => {
     // 过滤掉之前的未分类接口（type 为 request 且 id 为 null 的项）
     collections.value = collections.value.filter(item => item.type === 'collection')
 
+    const collectionIndex = new Map()
+    const indexCollections = (nodes) => {
+      nodes.forEach(node => {
+        collectionIndex.set(node.id, node)
+        if (node.children) indexCollections(node.children)
+      })
+    }
+    indexCollections(collections.value)
     // 将请求添加到对应集合中或直接添加到根级别
     requests.forEach(request => {
       if (request.collection) {
         // 有关联集合的请求，添加到对应集合下
-        const collection = findCollectionById(collections.value, request.collection)
+        const collection = collectionIndex.get(request.collection)
         if (collection) {
           if (!collection.children) collection.children = []
           collection.children.push({
@@ -1249,19 +1211,6 @@ const loadRequests = async () => {
     ElMessage.error('加载请求失败')
     console.error('加载请求失败:', error)
   }
-}
-
-const flattenCollections = (items, parent = null) => {
-  let result = []
-  for (const item of items) {
-    if (item.type === 'collection') {
-      result.push(item)
-      if (item.children && item.children.length > 0) {
-        result = result.concat(flattenCollections(item.children, item))
-      }
-    }
-  }
-  return result
 }
 
 const onNodeClick = async (data) => {
@@ -1597,30 +1546,6 @@ const editCollectionForm = reactive({
 
 const collectionRules = {
   name: [{ required: true, message: '请输入集合名称', trigger: 'blur' }]
-}
-
-const methodClass = computed(() => {
-  const method = selectedRequest.value?.method || 'GET'
-  return `method-${method.toLowerCase()}`
-})
-
-const getMethodClass = (method) => {
-  return method ? method.toLowerCase() : 'get'
-}
-
-const getMethodColor = (method) => {
-  const colors = {
-    'get': '#61affe',
-    'post': '#49cc90',
-    'put': '#fca130',
-    'delete': '#f93e3e',
-    'patch': '#50e3c2',
-    'head': '#9013fe',
-    'options': '#0ebeff',
-    'connect': '#7f8c8d',
-    'trace': '#e67e22'
-  }
-  return colors[(method || 'GET').toLowerCase()] || '#61affe'
 }
 
 const requestMethod = computed({
@@ -2091,23 +2016,6 @@ const createCollection = async () => {
   }
 }
 
-const updateCollection = async () => {
-  if (!editCollectionForm.name.trim()) {
-    ElMessage.warning('请输入集合名称')
-    return
-  }
-
-  try {
-    await api.patch(`/api-testing/collections/${editCollectionForm.id}/`, editCollectionForm)
-    ElMessage.success('更新成功')
-    await loadCollections(selectedProject.value)
-    showEditCollectionDialog.value = false
-  } catch (error) {
-    ElMessage.error('更新失败')
-    console.error('更新失败:', error)
-  }
-}
-
 const importCurl = () => {
   // 清空上次的 curl 命令
   curlCommand.value = ''
@@ -2176,7 +2084,7 @@ const convertToArrayFormat = (data) => {
   return []
 }
 
-const exportRequest = () => {
+const exportRequest = async () => {
   if (!selectedRequest.value) return
 
   try {
@@ -2208,7 +2116,7 @@ const exportRequest = () => {
     }
 
     const curlCommand = RequestModelParser.toCurl(requestModel)
-    navigator.clipboard.writeText(curlCommand)
+    await navigator.clipboard.writeText(curlCommand)
     ElMessage.success('已复制到剪贴板')
   } catch (error) {
     ElMessage.error('导出失败')
@@ -2270,6 +2178,7 @@ const generateCode = async (language) => {
       timeout: 30000
     }
 
+    const { CodeGenerator } = await import('@/utils/codeGenerator')
     const code = await CodeGenerator.generateCode(requestModel, language)
     generatedCode.value = code
     showCodeGenerateDialog.value = true
@@ -2712,15 +2621,15 @@ const loadVariableFunctions = async () => {
 
 // 生命周期钩子
 onMounted(async () => {
-  await loadProjects()
-  await loadVariableFunctions()
-
-  // 添加全局点击事件监听器，用于隐藏右键菜单
+  // Register synchronously so unmount always removes the listeners, even while loading.
   document.addEventListener('click', handleGlobalClick)
   document.addEventListener('contextmenu', handleGlobalClick)
+  await Promise.all([loadProjects(), loadVariableFunctions()])
 })
 
 onBeforeUnmount(() => {
+  onSearchDebounced.cancel()
+  websocketConnection.value?.close()
   // 移除全局点击事件监听器
   document.removeEventListener('click', handleGlobalClick)
   document.removeEventListener('contextmenu', handleGlobalClick)

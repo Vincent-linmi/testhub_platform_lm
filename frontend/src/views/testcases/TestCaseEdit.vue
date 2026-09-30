@@ -62,6 +62,23 @@
           </el-col>
         </el-row>
 
+        <el-form-item :label="$t('testcase.group')">
+          <el-select
+            v-model="form.group_id"
+            :placeholder="$t('testcase.selectTargetGroup')"
+            clearable
+            filterable
+            :disabled="!form.project_id"
+          >
+            <el-option
+              v-for="group in projectGroups"
+              :key="group.id"
+              :label="group.name"
+              :value="group.id"
+            />
+          </el-select>
+        </el-form-item>
+
         <el-row :gutter="20">
           <el-col :span="24">
             <el-form-item :label="$t('testcase.relatedVersions')">
@@ -143,11 +160,13 @@ const loading = ref(true)
 const submitting = ref(false)
 const projects = ref([])
 const projectVersions = ref([])
+const projectGroups = ref([])
 
 const form = reactive({
   title: '',
   description: '',
   project_id: null,
+  group_id: null,
   priority: 'medium',
   test_type: 'functional',
   preconditions: '',
@@ -206,9 +225,25 @@ const fetchProjectVersions = async (projectId) => {
   }
 }
 
+const fetchProjectGroups = async (projectId) => {
+  if (!projectId) {
+    projectGroups.value = []
+    return
+  }
+  try {
+    const response = await api.get('/testcases/groups/', { params: { project: projectId } })
+    projectGroups.value = response.data.results || response.data || []
+  } catch (error) {
+    ElMessage.error(t('testcase.fetchGroupsFailed'))
+    projectGroups.value = []
+  }
+}
+
 const onProjectChange = (projectId) => {
   form.version_ids = []
+  form.group_id = null
   fetchProjectVersions(projectId)
+  fetchProjectGroups(projectId)
 }
 
 const onVersionChange = () => {
@@ -224,6 +259,7 @@ const fetchTestCase = async () => {
     form.title = testcase.title
     form.description = testcase.description
     form.project_id = testcase.project?.id || null
+    form.group_id = testcase.group?.id || null
     form.priority = testcase.priority
     form.test_type = testcase.test_type
     form.preconditions = convertBrToNewline(testcase.preconditions || '')
@@ -237,7 +273,10 @@ const fetchTestCase = async () => {
 
     // If project exists, fetch versions for that project
     if (form.project_id) {
-      await fetchProjectVersions(form.project_id)
+      await Promise.all([
+        fetchProjectVersions(form.project_id),
+        fetchProjectGroups(form.project_id)
+      ])
     }
 
     loading.value = false
@@ -257,6 +296,7 @@ const handleSubmit = async () => {
         // Convert newlines back to <br> tags before submitting
         const submitData = {
           ...form,
+          group_id: form.group_id || null,
           preconditions: convertNewlineToBr(form.preconditions || ''),
           steps: convertNewlineToBr(form.steps || ''),
           expected_result: convertNewlineToBr(form.expected_result || '')

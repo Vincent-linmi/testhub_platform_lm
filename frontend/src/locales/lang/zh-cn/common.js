@@ -1,4 +1,12 @@
 export default {
+  navigation: '导航菜单',
+  openNavigation: '打开导航菜单',
+  retry: '重试',
+  noResults: '没有匹配的数据',
+  resetFilters: '重置筛选',
+  loadFailed: '加载失败，请重试',
+  moreActions: '更多操作',
+
   confirm: '确定',
   cancel: '取消',
   save: '保存',

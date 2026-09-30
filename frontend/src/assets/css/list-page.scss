@@ -1,0 +1,31 @@
+// Applied explicitly to list screens as they adopt the shared layout.
+.th-list-page {
+  .list-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 20px;
+    .el-input { width: min(320px, 100%); }
+    .el-select { width: 180px; }
+  }
+  .list-error { margin-bottom: 16px; }
+  .pagination-container {
+    display: flex;
+    justify-content: flex-end;
+    padding-top: 20px;
+    margin-top: 16px;
+    border-top: 1px solid var(--th-border);
+    .el-pagination { flex-wrap: wrap; row-gap: 8px; }
+  }
+  .table-container { min-width: 0; }
+  @media (max-width: 768px) {
+    .list-toolbar {
+      gap: 10px;
+      .el-input { width: 100%; }
+      .el-select { flex: 1 1 140px; width: auto; min-width: 0; }
+    }
+    .pagination-container { justify-content: center; }
+    .card-container { padding: 14px; }
+  }
+}

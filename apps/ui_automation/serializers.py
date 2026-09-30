@@ -1,10 +1,11 @@
 from rest_framework import serializers
+from django.db import models
 from django.utils import timezone
 from .models import (
     UiProject, LocatorStrategy, Element, TestScript, TestSuite,
     TestSuiteScript, TestSuiteTestCase, TestExecution, TestEnvironment, Screenshot,
     ElementGroup, PageObject, PageObjectElement, ScriptStep, ScriptElementUsage,
-    TestCase, TestCaseStep, TestCaseExecution, OperationRecord,
+    TestCaseGroup, TestCase, TestCaseStep, TestCaseExecution, TestFileAsset, OperationRecord,
     UiScheduledTask, UiNotificationLog, UiTaskNotificationSetting,
     AICase, AIExecutionRecord
 )
@@ -528,13 +529,125 @@ class TestCaseStepSerializer(serializers.ModelSerializer):
     """测试用例步骤序列化器"""
     element_name = serializers.CharField(source='element.name', read_only=True)
     element_locator = serializers.CharField(source='element.locator_value', read_only=True)
+    file_asset_name = serializers.CharField(source='file_asset.name', read_only=True)
+    file_asset_ids = serializers.SerializerMethodField()
+    file_asset_names = serializers.SerializerMethodField()
 
     class Meta:
         model = TestCaseStep
         fields = [
             'id', 'step_number', 'action_type', 'element', 'element_name', 'element_locator',
-            'input_value', 'wait_time', 'assert_type', 'assert_value', 'description', 'created_at'
+            'input_value', 'wait_time', 'assert_type', 'assert_value', 'file_asset',
+            'file_asset_name', 'file_asset_ids', 'file_asset_names', 'description', 'created_at'
         ]
+
+    @staticmethod
+    def _selected_assets(obj):
+        assets = list(obj.file_assets.all())
+        if not assets and obj.file_asset:
+            assets = [obj.file_asset]
+        order = obj.file_asset_order or []
+        if order:
+            positions = {int(asset_id): index for index, asset_id in enumerate(order)}
+            assets.sort(key=lambda asset: positions.get(asset.id, len(positions)))
+        return assets
+
+    def get_file_asset_ids(self, obj):
+        return [asset.id for asset in self._selected_assets(obj)]
+
+    def get_file_asset_names(self, obj):
+        return [asset.name for asset in self._selected_assets(obj)]
+
+    def validate(self, attrs):
+        instance = getattr(self, 'instance', None)
+        action_type = attrs.get('action_type', getattr(instance, 'action_type', None))
+        test_case = attrs.get('test_case', getattr(instance, 'test_case', None))
+        element = attrs.get('element', getattr(instance, 'element', None))
+        file_asset = attrs.get('file_asset', getattr(instance, 'file_asset', None))
+
+        from local_playwright_agent.step_runtime import validate_step
+        contract = {key: attrs.get(key, getattr(instance, key, ''))
+                    for key in ('action_type', 'input_value', 'assert_type', 'assert_value')}
+        try:
+            validate_step(contract, templates=True)
+        except ValueError as exc:
+            raise serializers.ValidationError({'step': str(exc)})
+
+        if file_asset and test_case and file_asset.project_id != test_case.project_id:
+            raise serializers.ValidationError({'file_asset': '测试文件必须属于用例所在项目'})
+        if action_type == 'uploadFile':
+            if not element:
+                raise serializers.ValidationError({'element': '上传文件步骤必须选择元素'})
+            if not file_asset:
+                raise serializers.ValidationError({'file_asset': '上传文件步骤必须选择测试文件'})
+        return attrs
+
+
+class TestFileAssetSerializer(serializers.ModelSerializer):
+    project_name = serializers.CharField(source='project.name', read_only=True)
+    storage_key = serializers.CharField(source='file.name', read_only=True)
+    used_by = serializers.SerializerMethodField()
+    created_by_name = serializers.CharField(source='created_by.username', read_only=True)
+
+    class Meta:
+        model = TestFileAsset
+        fields = [
+            'id', 'project', 'name', 'file', 'mime_type', 'file_size', 'sha256',
+            'created_by', 'created_by_name', 'created_at', 'project_name', 'storage_key', 'used_by'
+        ]
+        read_only_fields = [
+            'name', 'mime_type', 'file_size', 'sha256', 'created_by', 'created_at'
+        ]
+        extra_kwargs = {'file': {'write_only': True}}
+
+
+    def get_used_by(self, obj):
+        cases = TestCase.objects.filter(
+            models.Q(steps__file_asset=obj) | models.Q(steps__file_assets=obj)
+        ).distinct()
+        return [{'id': case.id, 'name': case.name} for case in cases]
+
+
+class TestCaseGroupSerializer(serializers.ModelSerializer):
+    """UI 自动化测试用例分组序列化器。"""
+
+    project_id = serializers.PrimaryKeyRelatedField(
+        source='project',
+        queryset=UiProject.objects.all(),
+        write_only=True,
+    )
+    project_name = serializers.CharField(source='project.name', read_only=True)
+    test_case_count = serializers.IntegerField(read_only=True, default=0)
+
+    class Meta:
+        model = TestCaseGroup
+        fields = [
+            'id', 'name', 'description', 'order', 'project_id', 'project_name',
+            'test_case_count', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
+    def validate(self, attrs):
+        project = attrs.get('project', getattr(self.instance, 'project', None))
+        if self.instance and project.pk != self.instance.project_id:
+            raise serializers.ValidationError({'project_id': '分组不能移动到其他项目'})
+        request = self.context.get('request')
+        if request and project and not UiProject.objects.filter(
+            models.Q(owner=request.user) | models.Q(members=request.user),
+            pk=project.pk,
+        ).exists():
+            raise serializers.ValidationError({'project_id': '项目不存在或无权访问'})
+
+        name = attrs.get('name', getattr(self.instance, 'name', '')).strip()
+        if not name:
+            raise serializers.ValidationError({'name': '分组名称不能为空'})
+        attrs['name'] = name
+        duplicate = TestCaseGroup.objects.filter(project=project, name__iexact=name)
+        if self.instance:
+            duplicate = duplicate.exclude(pk=self.instance.pk)
+        if duplicate.exists():
+            raise serializers.ValidationError({'name': '该项目下已存在同名分组'})
+        return attrs
 
 
 class TestCaseSerializer(serializers.ModelSerializer):
@@ -542,14 +655,44 @@ class TestCaseSerializer(serializers.ModelSerializer):
     steps = TestCaseStepSerializer(many=True, read_only=True)
     created_by_name = serializers.CharField(source='created_by.username', read_only=True)
     project_name = serializers.CharField(source='project.name', read_only=True)
+    group = TestCaseGroupSerializer(read_only=True)
+    group_id = serializers.PrimaryKeyRelatedField(
+        source='group',
+        queryset=TestCaseGroup.objects.all(),
+        required=False,
+        allow_null=True,
+        write_only=True,
+    )
 
     class Meta:
         model = TestCase
         fields = [
-            'id', 'name', 'description', 'project', 'project_name', 'status', 'priority',
+            'id', 'name', 'description', 'project', 'project_name', 'group', 'group_id',
+            'status', 'priority',
+            'global_wait_enabled', 'global_wait_time', 'data_driven_enabled', 'data_rows',
             'created_by', 'created_by_name', 'created_at', 'updated_at', 'steps'
         ]
         read_only_fields = ['created_by']
+
+    def validate(self, attrs):
+        project = attrs.get('project', getattr(self.instance, 'project', None))
+        group = attrs.get('group', getattr(self.instance, 'group', None))
+        request = self.context.get('request')
+        if request and project and not UiProject.objects.filter(
+            models.Q(owner=request.user) | models.Q(members=request.user),
+            pk=project.pk,
+        ).exists():
+            raise serializers.ValidationError({'project': '项目不存在或无权访问'})
+        if group and project and group.project_id != project.id:
+            raise serializers.ValidationError({'group_id': '所选分组不属于当前项目'})
+
+        from .data_driven import validate_rows
+        rows = attrs.get('data_rows', getattr(self.instance, 'data_rows', []))
+        validate_rows(rows)
+        enabled = attrs.get('data_driven_enabled', getattr(self.instance, 'data_driven_enabled', False))
+        if enabled and not rows:
+            raise serializers.ValidationError({'data_rows': '启用数据驱动时请至少配置一行数据'})
+        return attrs
 
     def create(self, validated_data):
         validated_data['created_by'] = self.context['request'].user
@@ -562,6 +705,9 @@ class TestCaseExecutionSerializer(serializers.ModelSerializer):
     project_name = serializers.CharField(source='project.name', read_only=True)
     test_suite_name = serializers.SerializerMethodField()
     created_by_name = serializers.SerializerMethodField()
+    local_artifacts = serializers.SerializerMethodField()
+    data_results = serializers.SerializerMethodField()
+    data_label = serializers.SerializerMethodField()
 
     class Meta:
         model = TestCaseExecution
@@ -570,10 +716,23 @@ class TestCaseExecutionSerializer(serializers.ModelSerializer):
             'test_suite', 'test_suite_name', 'execution_source', 'status',
             'engine', 'browser', 'headless', 'execution_logs', 'error_message',
             'screenshots', 'execution_time', 'started_at', 'finished_at',
-            'created_by', 'created_by_name', 'created_at'
+            'created_by', 'created_by_name', 'created_at', 'local_artifacts',
+            'batch_id', 'data_index', 'data_row', 'data_results', 'data_label'
         ]
         read_only_fields = ['created_by']
     
+    def get_data_label(self, obj):
+        from .data_driven import data_label
+        return data_label(obj)
+
+    def get_data_results(self, obj):
+        if not obj.batch_id or obj.data_index is not None:
+            return []
+        from .data_driven import execution_response
+        return [execution_response(item) for item in TestCaseExecution.objects.filter(
+            batch_id=obj.batch_id, test_case=obj.test_case, data_index__isnull=False,
+        ).order_by('data_index')]
+
     def get_test_suite_name(self, obj):
         """获取测试套件名称"""
         return obj.test_suite.name if obj.test_suite else None
@@ -581,6 +740,35 @@ class TestCaseExecutionSerializer(serializers.ModelSerializer):
     def get_created_by_name(self, obj):
         """获取创建人姓名"""
         return obj.created_by.username if obj.created_by else '-'
+
+    def get_local_artifacts(self, obj):
+        try:
+            artifacts = obj.local_job.artifacts.all()
+        except TestCaseExecution.local_job.RelatedObjectDoesNotExist:
+            if not obj.batch_id:
+                return []
+            from .models import LocalExecutionJob
+            suite_job = LocalExecutionJob.objects.filter(pk=obj.batch_id, suite_execution__isnull=False).first()
+            if suite_job:
+                artifacts = suite_job.artifacts.filter(original_name__startswith=f'execution-{obj.id}-')
+            else:
+                parent = TestCaseExecution.objects.filter(
+                    batch_id=obj.batch_id, test_case=obj.test_case, local_job__isnull=False,
+                ).first()
+                if not parent:
+                    return []
+                artifacts = parent.local_job.artifacts.filter(original_name__startswith=f'row-{obj.data_index}-')
+        request = self.context.get('request')
+        return [{
+            'id': artifact.id,
+            'type': artifact.artifact_type,
+            'name': artifact.original_name,
+            'size': artifact.file_size,
+            'sha256': artifact.sha256,
+            'download_url': request.build_absolute_uri(
+                f'/api/ui-automation/local-runner/artifacts/{artifact.id}/download/'
+            ) if request else f'/api/ui-automation/local-runner/artifacts/{artifact.id}/download/',
+        } for artifact in artifacts]
 
     def create(self, validated_data):
         validated_data['created_by'] = self.context['request'].user
@@ -933,4 +1121,3 @@ class UiTaskNotificationSettingSerializer(serializers.ModelSerializer):
         if 'webhook' in types:
             type_names.append('Webhook机器人')
         return ', '.join(type_names) if type_names else "无"
-

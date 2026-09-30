@@ -3,6 +3,10 @@ Playwright自动化测试执行引擎
 用于驱动真实浏览器执行UI自动化测试
 """
 import asyncio
+from local_playwright_agent.step_runtime import (
+    EXTENDED_ACTIONS, PAGE_ASSERTIONS, prepare_contract,
+    playwright_locator, execute_playwright_extension, resolve_timeout_ms,
+)
 import base64
 import time
 from datetime import datetime
@@ -10,6 +14,7 @@ from typing import Dict, List, Optional, Tuple
 from playwright.async_api import async_playwright, Page, Browser, BrowserContext, TimeoutError as PlaywrightTimeout
 import logging
 from .variable_resolver import resolve_variables
+from .test_file_utils import get_step_file_assets, materialized_test_files
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +31,7 @@ class PlaywrightTestEngine:
         """
         self.browser_type = browser_type
         self.headless = headless
+        self.runtime_variables = {}
         self.playwright = None
         self.browser: Optional[Browser] = None
         self.context: Optional[BrowserContext] = None
@@ -199,19 +205,34 @@ class PlaywrightTestEngine:
         """
         action_type = step.action_type
         
-        # 预先解析变量
-        resolved_input_value = step.input_value
-        if step.input_value:
-            resolved_input_value = resolve_variables(step.input_value)
-            
-        resolved_assert_value = step.assert_value
-        if step.assert_value:
-            resolved_assert_value = resolve_variables(step.assert_value)
-            
         start_time = time.time()
         screenshot_base64 = None
-
+        element_name = (element_data or {}).get('name', '页面')
+        element_data = element_data or {}
+        locator_strategy = element_data.get('locator_strategy', 'css')
+        locator_value = element_data.get('locator_value', '')
+        timeout_seconds = (step.wait_time or 1000) / 1000
         try:
+            step_contract = prepare_contract({
+                'action_type': action_type, 'input_value': step.input_value,
+                'assert_type': step.assert_type, 'assert_value': step.assert_value,
+            }, self.runtime_variables, resolve_variables)
+            resolved_input_value = step_contract['input_value']
+            resolved_assert_value = step_contract['assert_value']
+            if action_type in EXTENDED_ACTIONS:
+                page_assertion = action_type == 'assert' and step.assert_type in PAGE_ASSERTIONS
+                if not page_assertion and not element_data.get('locator_value'):
+                    raise ValueError(f'操作 {action_type} 缺少元素定位器')
+                timeout = resolve_timeout_ms(
+                    None if page_assertion else element_data,
+                    None if action_type == 'assert' else step.wait_time,
+                )
+                locator = None if page_assertion else playwright_locator(self.page, element_data)
+                message = await execute_playwright_extension(
+                    self.page, locator, step_contract, self.runtime_variables, timeout,
+                    element_data.get('force_action', False))
+                return True, message, None
+
             # wait和screenshot操作不需要元素定位器
             if action_type == 'wait':
                 wait_seconds = step.wait_time / 1000 if step.wait_time else 1
@@ -305,13 +326,7 @@ class PlaywrightTestEngine:
 
             # 计算超时时间：优先使用元素的wait_timeout（秒），其次使用步骤的wait_time（毫秒）
             # 如果元素有wait_timeout，转换为毫秒；否则使用步骤的wait_time
-            element_wait_timeout = element_data.get('wait_timeout')  # 秒
-            if element_wait_timeout is not None and element_wait_timeout > 0:
-                timeout_ms = element_wait_timeout * 1000  # 转换为毫秒
-            elif step.wait_time:
-                timeout_ms = step.wait_time
-            else:
-                timeout_ms = 5000  # 默认5秒
+            timeout_ms = resolve_timeout_ms(element_data, step.wait_time)
 
             # 根据定位策略获取元素
             if locator_strategy.lower() == 'id':
@@ -361,6 +376,26 @@ class PlaywrightTestEngine:
 
             # 执行操作
             execution_time = 0
+
+            if action_type == 'uploadFile':
+                assets = get_step_file_assets(step)
+                with materialized_test_files(assets) as file_paths:
+                    input_type = await locator.get_attribute('type')
+                    if (input_type or '').lower() == 'file':
+                        await locator.set_input_files(file_paths, timeout=timeout_ms)
+                    else:
+                        async with self.page.expect_file_chooser(timeout=timeout_ms) as chooser_info:
+                            await locator.click(timeout=timeout_ms, force=force_action)
+                        file_chooser = await chooser_info.value
+                        await file_chooser.set_files(file_paths)
+
+                execution_time = round(time.time() - start_time, 2)
+                file_names = '、'.join(asset.name for asset in assets)
+                log = f"✓ 一次选择 {len(assets)} 个上传文件成功: {file_names}\n"
+                log += f"  - 触发元素: '{element_name}'\n"
+                log += f"  - 定位器: {locator_strategy}={locator_value}\n"
+                log += f"  - 执行时间: {execution_time}秒"
+                return True, log, None
 
             if action_type == 'click':
                 # 检测是否是原生HTML select的option元素（优先检测，因为option元素特殊）
@@ -699,20 +734,21 @@ class PlaywrightTestEngine:
                 log += f"  - 执行时间: {execution_time}秒"
                 return True, log, None
 
-            elif action_type == 'getText':
-                text = await locator.inner_text(timeout=timeout_ms)
-                execution_time = round(time.time() - start_time, 2)
-                log = f"✓ 获取元素 '{element_name}' 的文本成功\n"
-                log += f"  - 定位器: {locator_strategy}={locator_value}\n"
-                log += f"  - 文本内容: '{text}'\n"
-                log += f"  - 超时设置: {timeout_ms/1000}秒\n"
-                log += f"  - 执行时间: {execution_time}秒"
-                return True, log, None
-
             elif action_type == 'waitFor':
                 await locator.wait_for(state='visible', timeout=timeout_ms)
                 execution_time = round(time.time() - start_time, 2)
                 log = f"✓ 等待元素 '{element_name}' 出现成功\n"
+                log += f"  - 定位器: {locator_strategy}={locator_value}\n"
+                log += f"  - 超时设置: {timeout_ms/1000}秒\n"
+                log += f"  - 等待时间: {execution_time}秒"
+                return True, log, None
+
+            elif action_type == 'waitForEnabled':
+                # trial 只执行 Playwright 的可见、稳定、可接收事件和 enabled
+                # 检查，不会真正点击元素。
+                await locator.click(timeout=timeout_ms, trial=True)
+                execution_time = round(time.time() - start_time, 2)
+                log = f"✓ 等待元素 '{element_name}' 可点击成功\n"
                 log += f"  - 定位器: {locator_strategy}={locator_value}\n"
                 log += f"  - 超时设置: {timeout_ms/1000}秒\n"
                 log += f"  - 等待时间: {execution_time}秒"
@@ -738,71 +774,9 @@ class PlaywrightTestEngine:
                 log += f"  - 执行时间: {execution_time}秒"
                 return True, log, None
 
-            elif action_type == 'assert':
-                # 根据断言类型执行不同的断言
-                if step.assert_type == 'textContains':
-                    text = await locator.inner_text(timeout=timeout_ms)
-                    if resolved_assert_value in text:
-                        log = f"✓ 断言通过: 文本包含 '{resolved_assert_value}'\n"
-                        if resolved_assert_value != step.assert_value:
-                             log += f"  - 变量解析: '{step.assert_value}' => '{resolved_assert_value}'\n"
-                        log += f"  - 实际文本: '{text}'\n"
-                        log += f"  - 超时设置: {timeout_ms/1000}秒"
-                        return True, log, None
-                    else:
-                        log = f"✗ 断言失败: 文本不包含 '{resolved_assert_value}'\n"
-                        if resolved_assert_value != step.assert_value:
-                             log += f"  - 变量解析: '{step.assert_value}' => '{resolved_assert_value}'\n"
-                        log += f"  - 实际文本: '{text}'"
-                        screenshot = await self.page.screenshot()
-                        screenshot_base64 = f"data:image/png;base64,{base64.b64encode(screenshot).decode()}"
-                        return False, log, screenshot_base64
-
-                elif step.assert_type == 'textEquals':
-                    text = await locator.inner_text(timeout=timeout_ms)
-                    if text == resolved_assert_value:
-                        log = f"✓ 断言通过: 文本等于 '{resolved_assert_value}'\n"
-                        if resolved_assert_value != step.assert_value:
-                             log += f"  - 变量解析: '{step.assert_value}' => '{resolved_assert_value}'\n"
-                        log += f"  - 超时设置: {timeout_ms/1000}秒"
-                        return True, log, None
-                    else:
-                        log = f"✗ 断言失败: 文本不等于 '{resolved_assert_value}'\n"
-                        if resolved_assert_value != step.assert_value:
-                             log += f"  - 变量解析: '{step.assert_value}' => '{resolved_assert_value}'\n"
-                        log += f"  - 期望: '{resolved_assert_value}'\n"
-                        log += f"  - 实际: '{text}'"
-                        screenshot = await self.page.screenshot()
-                        screenshot_base64 = f"data:image/png;base64,{base64.b64encode(screenshot).decode()}"
-                        return False, log, screenshot_base64
-
-                elif step.assert_type == 'isVisible':
-                    is_visible = await locator.is_visible()
-                    if is_visible:
-                        log = f"✓ 断言通过: 元素 '{element_name}' 可见"
-                        return True, log, None
-                    else:
-                        log = f"✗ 断言失败: 元素 '{element_name}' 不可见"
-                        screenshot = await self.page.screenshot()
-                        screenshot_base64 = f"data:image/png;base64,{base64.b64encode(screenshot).decode()}"
-                        return False, log, screenshot_base64
-
-                elif step.assert_type == 'exists':
-                    count = await locator.count()
-                    if count > 0:
-                        log = f"✓ 断言通过: 元素 '{element_name}' 存在"
-                        return True, log, None
-                    else:
-                        log = f"✗ 断言失败: 元素 '{element_name}' 不存在"
-                        screenshot = await self.page.screenshot()
-                        screenshot_base64 = f"data:image/png;base64,{base64.b64encode(screenshot).decode()}"
-                        return False, log, screenshot_base64
-
-
-
             else:
-                log = f"⚠ 未知的操作类型: {action_type}"
-                return True, log, None
+                log = f"不支持的操作类型: {action_type}"
+                return False, log, None
 
         except PlaywrightTimeout as e:
             execution_time = round(time.time() - start_time, 2)

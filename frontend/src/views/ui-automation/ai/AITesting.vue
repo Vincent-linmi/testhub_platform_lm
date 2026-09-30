@@ -136,7 +136,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, nextTick, computed } from 'vue'
+import { ref, reactive, nextTick, computed, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { VideoPlay, DocumentAdd, CircleCheckFilled, CircleCheck, Loading, SwitchButton } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
@@ -218,15 +218,24 @@ const handleStop = async () => {
 }
 
 // 轮询日志
+let pollInterval
+let polling = false
+let disposed = false
+onUnmounted(() => { disposed = true; clearInterval(pollInterval) })
 const pollLogs = () => {
-  const pollInterval = setInterval(async () => {
+  clearInterval(pollInterval)
+  if (disposed) return
+  pollInterval = setInterval(async () => {
+    if (polling) return
     if (!currentExecutionId.value) {
       clearInterval(pollInterval)
       return
     }
     
     try {
+      polling = true
       const response = await getAIExecutionRecordDetail(currentExecutionId.value)
+      if (disposed) return
       const record = response.data
       
       logs.value = record.logs || ''
@@ -259,6 +268,8 @@ const pollLogs = () => {
     } catch (error) {
       console.error('获取日志失败:', error)
       // 不停止轮询，可能是临时网络问题
+    } finally {
+      polling = false
     }
   }, 2000) // 每2秒轮询一次
 }

@@ -723,7 +723,7 @@ export default {
       // 在开始生成前，主动刷新token确保生成过程中不会过期
       try {
         const userStore = useUserStore()
-        if (userStore.isTokenExpiringSoon && userStore.refreshToken) {
+        if (userStore.isTokenExpiringSoon() && userStore.refreshToken) {
           console.log('Refreshing token before generation...')
           await userStore.refreshAccessToken()
           console.log('Token refreshed successfully, safe to start generation')
@@ -1336,7 +1336,7 @@ export default {
 
         // 识别测试用例开始标志
         if (line.includes('测试用例') || line.includes('Test Case') ||
-            line.match(/^(\d+\.|\*|\-|\d+、)/)) {
+            line.match(/^(\d+\.|\*|-|\d+、)/)) {
 
           // 如果之前有测试用例数据，先保存
           if (Object.keys(currentTestCase).length > 0) {
@@ -1354,7 +1354,7 @@ export default {
           // 开始新的测试用例
           currentTestCase = {
             number: `TC${testCaseNumber}`,
-            scenario: line.replace(/^(\d+\.|\*|\-|\d+、)\s*/, '').replace(/测试用例\d*[:：]?\s*/, ''),
+            scenario: line.replace(/^(\d+\.|\*|-|\d+、)\s*/, '').replace(/测试用例\d*[:：]?\s*/, ''),
             precondition: '',
             steps: '',
             expected: '',
@@ -1375,7 +1375,7 @@ export default {
                 nextLine.includes('预期结果') || nextLine.includes('Expected') ||
                 nextLine.includes('优先级') || nextLine.includes('Priority') ||
                 nextLine.includes('测试用例') || nextLine.includes('Test Case') ||
-                nextLine.match(/^(\d+\.|\*|\-|\d+、)/)) {
+                nextLine.match(/^(\d+\.|\*|-|\d+、)/)) {
               break;
             }
             if (nextLine) {
@@ -1396,7 +1396,7 @@ export default {
             if (nextLine.includes('预期结果') || nextLine.includes('Expected') ||
                 nextLine.includes('优先级') || nextLine.includes('Priority') ||
                 nextLine.includes('测试用例') || nextLine.includes('Test Case') ||
-                nextLine.match(/^(\d+\.|\*|\-|\d+、)/)) {
+                nextLine.match(/^(\d+\.|\*|-|\d+、)/)) {
               break;
             }
             if (nextLine) {
@@ -1416,7 +1416,7 @@ export default {
             const nextLine = lines[i].trim();
             if (nextLine.includes('优先级') || nextLine.includes('Priority') ||
                 nextLine.includes('测试用例') || nextLine.includes('Test Case') ||
-                nextLine.match(/^(\d+\.|\*|\-|\d+、)/)) {
+                nextLine.match(/^(\d+\.|\*|-|\d+、)/)) {
               break;
             }
             if (nextLine) {

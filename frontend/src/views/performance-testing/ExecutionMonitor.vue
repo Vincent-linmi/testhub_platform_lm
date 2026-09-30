@@ -450,7 +450,7 @@ async function pollOnce() {
       execution.summary = data.summary
       latest.value = { ...latest.value, ...data.summary }
     }
-    ;(data.samples || []).forEach(pushSample)
+    (data.samples || []).forEach(pushSample)
     if (!ACTIVE_STATUSES.includes(data.status)) onFinished()
   } catch (e) {
     /* 网络抖动不打断轮询 */

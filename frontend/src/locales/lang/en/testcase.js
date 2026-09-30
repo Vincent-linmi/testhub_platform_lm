@@ -15,6 +15,10 @@ export default {
     importRecords: 'Import Records',
     saveChanges: 'Save Changes',
     createCase: 'Create Case',
+    manageGroups: 'Manage Groups',
+    newGroup: 'New Group',
+    renameGroup: 'Rename Group',
+    moveToGroup: 'Move to Group',
 
     // Field labels
     caseTitle: 'Case Title',
@@ -31,6 +35,10 @@ export default {
     author: 'Author',
     createdAt: 'Created At',
     serialNumber: 'No.',
+    group: 'Case Group',
+    groupName: 'Group Name',
+    caseCount: 'Cases',
+    targetGroup: 'Target Group',
 
     // Priority
     low: 'Low',
@@ -65,6 +73,10 @@ export default {
     expectedResultPlaceholder: 'Enter overall expected result',
     priorityFilter: 'Priority Filter',
     statusFilter: 'Status Filter',
+    groupFilter: 'Group Filter',
+    selectProjectForGroup: 'Select a project to manage groups',
+    selectTargetGroup: 'Select target group',
+    groupNamePlaceholder: 'Enter group name',
     importDialogTitle: 'Import Test Cases',
     uploadTip: 'Please download the template first, fill it in, then upload the .xlsx file',
     importProject: 'Import Project',
@@ -125,6 +137,18 @@ export default {
     importFileRequired: 'Please select an import file first',
     noImportFile: 'No failure report file available',
     downloadFailureReportFailed: 'Failed to download failure report',
+    fetchGroupsFailed: 'Failed to fetch test case groups',
+    groupNameRequired: 'Group name is required',
+    groupCreateSuccess: 'Group created successfully',
+    groupCreateFailed: 'Failed to create group',
+    groupRenameSuccess: 'Group renamed successfully',
+    groupRenameFailed: 'Failed to rename group',
+    groupDeleteConfirm: 'Delete group "{name}"? Its {count} test cases will become ungrouped; the cases will not be deleted.',
+    groupDeleteSuccess: 'Group deleted successfully',
+    groupDeleteFailed: 'Failed to delete group',
+    sameProjectRequired: 'Select test cases from the same project to move them together',
+    moveGroupSuccess: 'Moved {count} test cases',
+    moveGroupFailed: 'Failed to move test cases',
 
     // Other
     noVersion: 'No version',
@@ -132,6 +156,8 @@ export default {
     noDescription: 'No description',
     none: 'None',
     baseline: 'Baseline',
+    ungrouped: 'Ungrouped',
+    noGroups: 'No groups in this project',
 
     // Validation
     titleRequired: 'Please enter case title',
@@ -143,6 +169,7 @@ export default {
     excelNumber: 'Test Case ID',
     excelTitle: 'Case Title',
     excelProject: 'Related Project',
+    excelGroup: 'Case Group',
     excelVersions: 'Related Versions',
     excelPreconditions: 'Preconditions',
     excelSteps: 'Steps',

@@ -1,16 +1,20 @@
 from django.http import FileResponse
-from rest_framework import generics, permissions, status, pagination
+from rest_framework import generics, permissions, serializers, status, pagination
 from rest_framework.response import Response
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework import filters
-from django.db import models
+from django.db import models, transaction
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.views import APIView
 
-from .models import TestCase, TestCaseStep, TestCaseAttachment, TestCaseComment, TestCaseImportRecord
+from .models import (
+    TestCase, TestCaseStep, TestCaseAttachment, TestCaseComment,
+    TestCaseGroup, TestCaseImportRecord,
+)
 from .serializers import (
     TestCaseSerializer, TestCaseListSerializer, TestCaseCreateSerializer, TestCaseUpdateSerializer,
-    TestCaseImportRecordListSerializer, TestCaseImportRecordDetailSerializer
+    TestCaseGroupSerializer, TestCaseImportRecordListSerializer,
+    TestCaseImportRecordDetailSerializer,
 )
 from apps.projects.models import Project
 from .services import TestCaseImportTemplateService, TestCaseExcelImportService
@@ -54,7 +58,7 @@ class TestCaseListCreateView(generics.ListCreateAPIView):
         queryset = TestCase.objects.filter(
             project__in=accessible_projects
         ).select_related(
-            'author', 'assignee', 'project'
+            'author', 'assignee', 'project', 'group'
         ).prefetch_related(
             'versions'
         ).distinct()
@@ -64,6 +68,11 @@ class TestCaseListCreateView(generics.ListCreateAPIView):
             project_ids = [int(pid) for pid in project_param.split(',') if pid.strip().isdigit()]
             if project_ids:
                 queryset = queryset.filter(project_id__in=project_ids)
+        group_param = self.request.query_params.get('group')
+        if group_param == 'ungrouped':
+            queryset = queryset.filter(group__isnull=True)
+        elif group_param and group_param.isdigit():
+            queryset = queryset.filter(group_id=int(group_param))
         return queryset
     
     def get_user_accessible_projects(self, user):
@@ -102,7 +111,14 @@ class TestCaseListCreateView(generics.ListCreateAPIView):
                     description='系统自动创建的默认项目'
                 )
         
-        serializer.save(author=user, project=project)
+        group = None
+        group_id = self.request.data.get('group_id')
+        if group_id not in (None, ''):
+            group = TestCaseGroup.objects.filter(id=group_id, project=project).first()
+            if not group:
+                raise serializers.ValidationError({'group_id': '所选分组不属于该项目'})
+
+        serializer.save(author=user, project=project, group=group)
 
 class TestCaseDetailView(generics.RetrieveUpdateDestroyAPIView):
     queryset = TestCase.objects.all()
@@ -119,7 +135,7 @@ class TestCaseDetailView(generics.RetrieveUpdateDestroyAPIView):
         return TestCase.objects.filter(
             project__in=accessible_projects
         ).select_related(
-            'author', 'assignee', 'project'
+            'author', 'assignee', 'project', 'group'
         ).prefetch_related(
             'versions', 'step_details', 'attachments', 'comments'
         )
@@ -131,19 +147,120 @@ class TestCaseDetailView(generics.RetrieveUpdateDestroyAPIView):
     def perform_update(self, serializer):
         user = self.request.user
         project_id = self.request.data.get('project_id')
+        project = serializer.instance.project
         
         if project_id:
             # 检查指定的项目是否存在且用户有权限
             accessible_projects = self.get_user_accessible_projects(user)
             try:
                 project = accessible_projects.get(id=project_id)
-                serializer.save(project=project)
             except Project.DoesNotExist:
-                # 如果指定项目不存在或无权限，保持原项目不变
-                serializer.save()
-        else:
-            # 没有指定项目，保持原项目不变
-            serializer.save()
+                raise serializers.ValidationError({'project_id': '项目不存在或无权访问'})
+
+        save_kwargs = {'project': project}
+        if 'group_id' in self.request.data:
+            group_id = self.request.data.get('group_id')
+            group = None
+            if group_id not in (None, ''):
+                group = TestCaseGroup.objects.filter(id=group_id, project=project).first()
+                if not group:
+                    raise serializers.ValidationError({'group_id': '所选分组不属于该项目'})
+            save_kwargs['group'] = group
+        elif project != serializer.instance.project:
+            # 切换项目时旧分组不再适用。
+            save_kwargs['group'] = None
+
+        serializer.save(**save_kwargs)
+
+
+class TestCaseGroupListCreateView(generics.ListCreateAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = TestCaseGroupSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        queryset = TestCaseGroup.objects.filter(
+            project__in=get_user_accessible_projects(self.request.user)
+        ).select_related('project').annotate(
+            testcase_count=models.Count('testcases')
+        )
+        project_id = self.request.query_params.get('project')
+        if project_id and project_id.isdigit():
+            queryset = queryset.filter(project_id=int(project_id))
+        return queryset
+
+    def perform_create(self, serializer):
+        project_id = self.request.data.get('project_id')
+        try:
+            project = get_user_accessible_projects(self.request.user).get(id=project_id)
+        except (Project.DoesNotExist, TypeError, ValueError):
+            raise serializers.ValidationError({'project_id': '请选择有权访问的项目'})
+        if TestCaseGroup.objects.filter(project=project, name__iexact=serializer.validated_data['name']).exists():
+            raise serializers.ValidationError({'name': '该项目下已存在同名分组'})
+        serializer.save(project=project)
+
+
+class TestCaseGroupDetailView(generics.RetrieveUpdateDestroyAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = TestCaseGroupSerializer
+    http_method_names = ['get', 'patch', 'delete', 'head', 'options']
+
+    def get_queryset(self):
+        return TestCaseGroup.objects.filter(
+            project__in=get_user_accessible_projects(self.request.user)
+        ).select_related('project').annotate(
+            testcase_count=models.Count('testcases')
+        )
+
+    def perform_update(self, serializer):
+        name = serializer.validated_data.get('name')
+        if name and TestCaseGroup.objects.filter(
+            project=serializer.instance.project,
+            name__iexact=name,
+        ).exclude(pk=serializer.instance.pk).exists():
+            raise serializers.ValidationError({'name': '该项目下已存在同名分组'})
+        serializer.save()
+
+
+class TestCaseBatchGroupView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request):
+        testcase_ids = request.data.get('testcase_ids')
+        if not isinstance(testcase_ids, list) or not testcase_ids:
+            return Response({'testcase_ids': '请选择要移动的测试用例'}, status=status.HTTP_400_BAD_REQUEST)
+        if len(testcase_ids) > 1000:
+            return Response({'testcase_ids': '一次最多移动 1000 条测试用例'}, status=status.HTTP_400_BAD_REQUEST)
+
+        normalized_ids = set()
+        for testcase_id in testcase_ids:
+            try:
+                normalized_ids.add(int(testcase_id))
+            except (TypeError, ValueError):
+                return Response({'testcase_ids': '测试用例ID格式不正确'}, status=status.HTTP_400_BAD_REQUEST)
+
+        testcases = TestCase.objects.filter(
+            id__in=normalized_ids,
+            project__in=get_user_accessible_projects(request.user),
+        )
+        if testcases.count() != len(normalized_ids):
+            return Response({'testcase_ids': '部分测试用例不存在或无权访问'}, status=status.HTTP_400_BAD_REQUEST)
+
+        group_id = request.data.get('group_id')
+        group = None
+        if group_id not in (None, ''):
+            group = TestCaseGroup.objects.filter(
+                id=group_id,
+                project__in=get_user_accessible_projects(request.user),
+            ).first()
+            if not group:
+                return Response({'group_id': '分组不存在或无权访问'}, status=status.HTTP_400_BAD_REQUEST)
+            if testcases.exclude(project=group.project).exists():
+                return Response({'group_id': '只能将用例移入同一项目下的分组'}, status=status.HTTP_400_BAD_REQUEST)
+
+        updated_count = testcases.update(group=group)
+        return Response({'updated_count': updated_count, 'group_id': group.id if group else None})
 
 
 class TestCaseImportTemplateDownloadView(APIView):

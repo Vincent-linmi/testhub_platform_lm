@@ -508,7 +508,7 @@ const debugSummary = computed(() => {
   if (t === 'LOGIN') {
     const url = props.url || (props.host ? 'https://' + props.host + (props.port ? ':' + props.port : '') + (d.endpoint || '') : '（请在基础信息中填写 URL/主机）')
     let assertionCount = 0
-    try { const a = JSON.parse(d.assertions_json || '[]'); assertionCount = Array.isArray(a) ? a.length : 0 } catch (e) {}
+    try { const a = JSON.parse(d.assertions_json || '[]'); assertionCount = Array.isArray(a) ? a.length : 0 } catch (e) { /* Invalid JSON is reported by the form validator. */ }
     return '\u2714\uFE0F 配置正确：' + (props.method || 'POST') + ' ' + url +
       '，' + (d.username ? '账号 ' + d.username : '账号未配置') +
       '，从 ' + (d.token_path || 'obj.token') + ' 提取 Token' +

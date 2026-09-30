@@ -14,19 +14,12 @@ export const useUserStore = defineStore('user', () => {
 
   const isAuthenticated = computed(() => !!accessToken.value && !!user.value)
 
-  // 检查token是否即将过期（5分钟内）
-  const isTokenExpiringSoon = computed(() => {
-    if (!tokenExpiresAt.value) return false
-    const now = Date.now()
-    const timeLeft = tokenExpiresAt.value - now
-    return timeLeft < 5 * 60 * 1000 // 5分钟
-  })
-
-  // 检查token是否已过期
-  const isTokenExpired = computed(() => {
-    if (!tokenExpiresAt.value) return false
-    return Date.now() > tokenExpiresAt.value
-  })
+  // Read the clock at the point of use; computed values would cache Date.now().
+  const isTokenExpiringSoon = () => tokenExpiresAt.value > 0 && tokenExpiresAt.value - Date.now() < 5 * 60 * 1000
+  const isTokenExpired = () => tokenExpiresAt.value > 0 && Date.now() >= tokenExpiresAt.value
+  let sessionVersion = 0
+  let refreshInFlight = null
+  let initPromise = null
 
   // 启动自动刷新token定时器
   const startAutoRefresh = () => {
@@ -37,12 +30,12 @@ export const useUserStore = defineStore('user', () => {
 
     // 每2分钟检查一次token是否需要刷新
     refreshTimer = setInterval(async () => {
-      if (refreshToken.value && isTokenExpiringSoon.value && accessToken.value) {
+      if (refreshToken.value && isTokenExpiringSoon() && accessToken.value) {
         try {
           await refreshAccessToken()
         } catch (error) {
           console.error('自动刷新token失败:', error)
-          // 刷新失败会自动logout，不需要额外处理
+          // 临时网络失败保留会话，下个周期重试。
         }
       }
     }, 2 * 60 * 1000) // 2分钟检查一次
@@ -57,192 +50,160 @@ export const useUserStore = defineStore('user', () => {
   }
 
   const login = async (credentials) => {
-    try {
-      const response = await api.post('/auth/login/', credentials)
+    const response = await api.post('/auth/login/', credentials)
 
-      // 保存双token
-      accessToken.value = response.data.access
-      refreshToken.value = response.data.refresh
-      user.value = response.data.user
+    // 保存双token
+    sessionVersion++
+    accessToken.value = response.data.access
+    refreshToken.value = response.data.refresh
+    user.value = response.data.user
 
-      // 计算过期时间（当前时间 + 30分钟）
-      const expiresAt = Date.now() + 30 * 60 * 1000
-      tokenExpiresAt.value = expiresAt
+    // 计算过期时间（当前时间 + 30分钟）
+    const expiresAt = Date.now() + 30 * 60 * 1000
+    tokenExpiresAt.value = expiresAt
 
-      // 持久化存储
-      localStorage.setItem('access_token', accessToken.value)
-      localStorage.setItem('refresh_token', refreshToken.value)
-      localStorage.setItem('token_expires_at', expiresAt.toString())
-      localStorage.setItem('user', JSON.stringify(user.value))
+    // 持久化存储
+    localStorage.setItem('access_token', accessToken.value)
+    localStorage.setItem('refresh_token', refreshToken.value)
+    localStorage.setItem('token_expires_at', expiresAt.toString())
+    localStorage.setItem('user', JSON.stringify(user.value))
 
-      // 启动自动刷新
-      startAutoRefresh()
+    // 启动自动刷新
+    startAutoRefresh()
 
-      track('login_success', {
-        event_type: 'business',
-        module: 'auth',
-        page_path: '/login',
-        success: true,
-        metadata: {
-          login_type: 'password'
-        }
-      })
+    track('login_success', {
+      event_type: 'business',
+      module: 'auth',
+      page_path: '/login',
+      success: true,
+      metadata: {
+        login_type: 'password'
+      }
+    })
 
-      return response.data
-    } catch (error) {
-      throw error
-    }
+    return response.data
   }
 
   const smsLogin = async (data) => {
-    try {
-      const response = await api.post('/auth/sms-login/', data)
+    const response = await api.post('/auth/sms-login/', data)
 
-      accessToken.value = response.data.access
-      refreshToken.value = response.data.refresh
-      user.value = response.data.user
+    sessionVersion++
+    accessToken.value = response.data.access
+    refreshToken.value = response.data.refresh
+    user.value = response.data.user
 
-      const expiresAt = Date.now() + 30 * 60 * 1000
-      tokenExpiresAt.value = expiresAt
+    const expiresAt = Date.now() + 30 * 60 * 1000
+    tokenExpiresAt.value = expiresAt
 
-      localStorage.setItem('access_token', accessToken.value)
-      localStorage.setItem('refresh_token', refreshToken.value)
-      localStorage.setItem('token_expires_at', expiresAt.toString())
-      localStorage.setItem('user', JSON.stringify(user.value))
+    localStorage.setItem('access_token', accessToken.value)
+    localStorage.setItem('refresh_token', refreshToken.value)
+    localStorage.setItem('token_expires_at', expiresAt.toString())
+    localStorage.setItem('user', JSON.stringify(user.value))
 
-      startAutoRefresh()
+    startAutoRefresh()
 
-      track('login_success', {
-        event_type: 'business',
-        module: 'auth',
-        page_path: '/login',
-        success: true,
-        metadata: {
-          login_type: 'sms'
-        }
-      })
+    track('login_success', {
+      event_type: 'business',
+      module: 'auth',
+      page_path: '/login',
+      success: true,
+      metadata: {
+        login_type: 'sms'
+      }
+    })
 
-      return response.data
-    } catch (error) {
-      throw error
-    }
+    return response.data
   }
 
   const register = async (userData) => {
-    try {
-      const response = await api.post('/auth/test-register/', userData)
+    const response = await api.post('/auth/test-register/', userData)
 
-      // 注册成功自动登录
-      accessToken.value = response.data.access
-      refreshToken.value = response.data.refresh
-      user.value = response.data.user
+    // 注册成功自动登录
+    sessionVersion++
+    accessToken.value = response.data.access
+    refreshToken.value = response.data.refresh
+    user.value = response.data.user
 
-      const expiresAt = Date.now() + 30 * 60 * 1000
-      tokenExpiresAt.value = expiresAt
+    const expiresAt = Date.now() + 30 * 60 * 1000
+    tokenExpiresAt.value = expiresAt
 
-      localStorage.setItem('access_token', accessToken.value)
-      localStorage.setItem('refresh_token', refreshToken.value)
-      localStorage.setItem('token_expires_at', expiresAt.toString())
-      localStorage.setItem('user', JSON.stringify(user.value))
+    localStorage.setItem('access_token', accessToken.value)
+    localStorage.setItem('refresh_token', refreshToken.value)
+    localStorage.setItem('token_expires_at', expiresAt.toString())
+    localStorage.setItem('user', JSON.stringify(user.value))
 
-      startAutoRefresh()
+    startAutoRefresh()
 
-      track('register_success', {
-        event_type: 'business',
-        module: 'auth',
-        page_path: '/register',
-        success: true
-      })
+    track('register_success', {
+      event_type: 'business',
+      module: 'auth',
+      page_path: '/register',
+      success: true
+    })
 
-      return response.data
-    } catch (error) {
-      throw error
-    }
+    return response.data
   }
 
-  // 添加一个标记防止logout过程中的循环调用
   let isLoggingOut = false
 
-  const logout = async () => {
-    // 防止重复调用logout
-    if (isLoggingOut) {
-      return
-    }
+  const logout = async ({ revoke = true } = {}) => {
+    if (isLoggingOut) return
     isLoggingOut = true
-
-    // 停止自动刷新定时器
+    const token = accessToken.value
+    const refresh = refreshToken.value
+    const canRevoke = revoke && refresh && !isTokenExpired()
+    sessionVersion++
     stopAutoRefresh()
-
+    accessToken.value = ''
+    refreshToken.value = ''
+    user.value = null
+    tokenExpiresAt.value = 0
+    for (const key of ['access_token', 'refresh_token', 'token_expires_at', 'user']) {
+      localStorage.removeItem(key)
+    }
     try {
-      // 只有当access token未过期时，才尝试调用logout API将refresh token加入黑名单
-      // 如果token已过期，直接清除本地状态即可，避免401死循环
-      if (refreshToken.value && !isTokenExpired.value) {
-        try {
-          await api.post('/auth/logout/', { refresh: refreshToken.value })
-        } catch (apiError) {
-          // logout API调用失败不影响本地清除操作
-          console.error('Logout API调用失败:', apiError)
-        }
+      if (canRevoke) {
+        await api.post('/auth/logout/', { refresh }, { headers: { Authorization: `Bearer ${token}` } })
       }
+    } catch (error) {
+      // Local logout succeeds even if the revocation endpoint is unavailable.
+      console.error('Logout API调用失败:', error)
     } finally {
-      // 清除所有认证信息
-      accessToken.value = ''
-      refreshToken.value = ''
-      user.value = null
-      tokenExpiresAt.value = 0
-
-      localStorage.removeItem('access_token')
-      localStorage.removeItem('refresh_token')
-      localStorage.removeItem('token_expires_at')
-      localStorage.removeItem('user')
-
-      // 重置标记
-      isLoggingOut = false
-
       window.location.href = '/login'
+      isLoggingOut = false
     }
   }
 
-  // 刷新access token
-  const refreshAccessToken = async () => {
-    try {
-      const response = await api.post('/auth/token/refresh/', {
-        refresh: refreshToken.value
-      })
-
-      // 更新access token和过期时间
-      accessToken.value = response.data.access
-      const expiresAt = Date.now() + 30 * 60 * 1000
-      tokenExpiresAt.value = expiresAt
-
-      // 如果返回了新的refresh token（启用了ROTATE_REFRESH_TOKENS）
-      if (response.data.refresh) {
-        refreshToken.value = response.data.refresh
-        localStorage.setItem('refresh_token', refreshToken.value)
+  const refreshAccessToken = () => {
+    if (refreshInFlight?.version === sessionVersion) return refreshInFlight.promise
+    const version = sessionVersion
+    const refresh = refreshToken.value
+    const promise = (async () => {
+      try {
+        const response = await api.post('/auth/token/refresh/', { refresh })
+        // A response from a previous login must never restore a logged-out session.
+        if (sessionVersion !== version) throw new Error('Session changed during token refresh')
+        accessToken.value = response.data.access
+        tokenExpiresAt.value = Date.now() + 30 * 60 * 1000
+        if (response.data.refresh) {
+          refreshToken.value = response.data.refresh
+          localStorage.setItem('refresh_token', refreshToken.value)
+        }
+        localStorage.setItem('access_token', accessToken.value)
+        localStorage.setItem('token_expires_at', tokenExpiresAt.value.toString())
+        return accessToken.value
+      } catch (error) {
+        // Transient network failures should not destroy a valid login.
+        if (sessionVersion === version && [400, 401, 403].includes(error.response?.status)) {
+          await logout({ revoke: false })
+        }
+        throw error
+      } finally {
+        if (refreshInFlight?.version === version) refreshInFlight = null
       }
-
-      // 持久化存储
-      localStorage.setItem('access_token', accessToken.value)
-      localStorage.setItem('token_expires_at', expiresAt.toString())
-
-      return response.data.access
-    } catch (error) {
-      // 刷新失败，清除所有认证信息
-      console.error('Token refresh failed:', error)
-      await logout()
-      throw error
-    }
-  }
-
-  const fetchUser = async () => {
-    try {
-      const response = await api.get('/users/me/')
-      user.value = response.data
-      localStorage.setItem('user', JSON.stringify(user.value))
-    } catch (error) {
-      await logout()
-      throw error
-    }
+    })()
+    refreshInFlight = { version, promise }
+    return promise
   }
 
   const fetchProfile = async () => {
@@ -259,7 +220,7 @@ export const useUserStore = defineStore('user', () => {
     }
   }
 
-  const initAuth = async () => {
+  const initializeAuth = async () => {
     // 从 localStorage 恢复用户信息
     if (!user.value) {
       const savedUser = localStorage.getItem('user')
@@ -274,7 +235,7 @@ export const useUserStore = defineStore('user', () => {
 
     if (accessToken.value) {
       // 检查 token 是否过期，过期则刷新
-      if (isTokenExpired.value && refreshToken.value) {
+      if (isTokenExpired() && refreshToken.value) {
         try {
           await refreshAccessToken()
         } catch (error) {
@@ -293,8 +254,15 @@ export const useUserStore = defineStore('user', () => {
         }
       }
 
-      startAutoRefresh()
+      if (accessToken.value) startAutoRefresh()
     }
+  }
+
+  const initAuth = () => {
+    if (!initPromise) {
+      initPromise = initializeAuth().finally(() => { initPromise = null })
+    }
+    return initPromise
   }
 
   return {

@@ -1,5 +1,8 @@
 from rest_framework import serializers
-from .models import TestCase, TestCaseStep, TestCaseAttachment, TestCaseComment, TestCaseImportRecord
+from .models import (
+    TestCase, TestCaseStep, TestCaseAttachment, TestCaseComment,
+    TestCaseGroup, TestCaseImportRecord,
+)
 from apps.users.serializers import UserSerializer
 from apps.versions.serializers import VersionSimpleSerializer
 
@@ -26,10 +29,31 @@ class ProjectSimpleSerializer(serializers.Serializer):
     id = serializers.IntegerField()
     name = serializers.CharField()
 
+
+class TestCaseGroupSimpleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = TestCaseGroup
+        fields = ['id', 'name']
+
+
+class TestCaseGroupSerializer(serializers.ModelSerializer):
+    project_id = serializers.IntegerField(read_only=True)
+    project_name = serializers.CharField(source='project.name', read_only=True)
+    testcase_count = serializers.IntegerField(read_only=True, default=0)
+
+    class Meta:
+        model = TestCaseGroup
+        fields = [
+            'id', 'name', 'description', 'order', 'project_id', 'project_name',
+            'testcase_count', 'created_at', 'updated_at',
+        ]
+        read_only_fields = ['id', 'created_at', 'updated_at']
+
 class TestCaseSerializer(serializers.ModelSerializer):
     author = UserSerializer(read_only=True)
     assignee = UserSerializer(read_only=True)
     project = ProjectSimpleSerializer(read_only=True)
+    group = TestCaseGroupSimpleSerializer(read_only=True)
     versions = VersionSimpleSerializer(many=True, read_only=True)
     step_details = TestCaseStepSerializer(many=True, read_only=True)
     attachments = TestCaseAttachmentSerializer(many=True, read_only=True)
@@ -44,6 +68,7 @@ class TestCaseListSerializer(serializers.ModelSerializer):
     author = serializers.SerializerMethodField()
     assignee = serializers.SerializerMethodField()
     project = serializers.SerializerMethodField()
+    group = TestCaseGroupSimpleSerializer(read_only=True)
     versions = serializers.SerializerMethodField()
     
     class Meta:
@@ -51,7 +76,7 @@ class TestCaseListSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'title', 'description', 'preconditions', 'steps', 'expected_result',
             'priority', 'test_type',
-            'author', 'assignee', 'project', 'versions', 'tags', 'created_at', 'updated_at'
+            'author', 'assignee', 'project', 'group', 'versions', 'tags', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_at', 'updated_at']
     
@@ -75,16 +100,19 @@ class TestCaseCreateSerializer(serializers.ModelSerializer):
         allow_empty=True,
         help_text="关联版本ID列表"
     )
+    group_id = serializers.IntegerField(required=False, allow_null=True, help_text="用例分组ID")
     
     class Meta:
         model = TestCase
         fields = [
-            'title', 'description', 'preconditions', 'steps', 'expected_result',
-            'priority', 'test_type', 'tags', 'project_id', 'version_ids'
+            'id', 'title', 'description', 'preconditions', 'steps', 'expected_result',
+            'priority', 'test_type', 'tags', 'project_id', 'group_id', 'version_ids'
         ]
+        read_only_fields = ['id']
     
     def create(self, validated_data):
         version_ids = validated_data.pop('version_ids', [])
+        validated_data.pop('group_id', None)
         # project_id会在视图的perform_create中处理
         validated_data.pop('project_id', None)
         
@@ -104,16 +132,19 @@ class TestCaseUpdateSerializer(serializers.ModelSerializer):
         allow_empty=True,
         help_text="关联版本ID列表"
     )
+    group_id = serializers.IntegerField(required=False, allow_null=True, help_text="用例分组ID")
     
     class Meta:
         model = TestCase
         fields = [
-            'title', 'description', 'preconditions', 'steps', 'expected_result',
-            'priority', 'test_type', 'tags', 'project_id', 'version_ids'
+            'id', 'title', 'description', 'preconditions', 'steps', 'expected_result',
+            'priority', 'test_type', 'tags', 'project_id', 'group_id', 'version_ids'
         ]
+        read_only_fields = ['id']
     
     def update(self, instance, validated_data):
         version_ids = validated_data.pop('version_ids', None)
+        validated_data.pop('group_id', None)
         # project_id会在视图中处理
         validated_data.pop('project_id', None)
         

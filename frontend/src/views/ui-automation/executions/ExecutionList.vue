@@ -59,7 +59,7 @@
         <el-table-column prop="test_case_name" :label="$t('uiAutomation.execution.caseName')" min-width="200">
           <template #default="{ row }">
             <el-link @click="viewExecutionDetail(row)" type="primary">
-              {{ row.test_case_name }}
+              {{ row.test_case_name }}<el-tag v-if="row.data_index != null" size="small" style="margin-left: 8px">数据行 {{ row.data_index }} · {{ row.data_label }}</el-tag>
             </el-link>
           </template>
         </el-table-column>
@@ -161,8 +161,20 @@
           <el-descriptions-item :label="$t('uiAutomation.execution.duration')" :span="2">{{ formatDuration(currentExecution.execution_time) }}</el-descriptions-item>
         </el-descriptions>
 
+        <el-descriptions v-if="currentExecution.data_index != null" :column="2" border style="margin-top: 12px">
+          <el-descriptions-item v-for="(value, key) in currentExecution.data_row" :key="key" :label="key">{{ /password|passwd|secret|token/i.test(key) ? '••••••' : value }}</el-descriptions-item>
+        </el-descriptions>
         <!-- 执行结果选项卡 -->
         <el-tabs v-model="activeTab" class="execution-tabs" style="margin-top: 20px;">
+          <el-tab-pane v-if="currentExecution.data_results?.length" label="数据行结果" name="data">
+            <el-table :data="currentExecution.data_results" border>
+              <el-table-column prop="data_index" label="数据行" width="100" />
+              <el-table-column prop="data_label" label="数据标识" />
+              <el-table-column label="结果"><template #default="{ row }">{{ getStatusText(row.status) }}</template></el-table-column>
+              <el-table-column prop="execution_time" label="耗时（秒）" />
+              <el-table-column label="操作"><template #default="{ row }"><el-button text type="primary" @click="openDataExecution(row.execution_id)">查看详情</el-button></template></el-table-column>
+            </el-table>
+          </el-tab-pane>
           <!-- 执行日志 - 所有状态都显示 -->
           <el-tab-pane :label="$t('uiAutomation.execution.executionLogs')" name="logs">
             <div class="logs-container">
@@ -183,6 +195,25 @@
               </div>
               <el-empty v-else :description="$t('uiAutomation.execution.noLogs')" />
             </div>
+          </el-tab-pane>
+
+          <el-tab-pane
+            v-if="currentExecution.local_artifacts && currentExecution.local_artifacts.length"
+            :label="$t('uiAutomation.execution.localArtifacts')"
+            name="artifacts"
+          >
+            <el-table :data="currentExecution.local_artifacts" border>
+              <el-table-column prop="type" :label="$t('uiAutomation.execution.artifactType')" width="180" />
+              <el-table-column prop="name" :label="$t('uiAutomation.execution.artifactName')" />
+              <el-table-column :label="$t('uiAutomation.execution.actions')" width="120">
+                <template #default="{ row }">
+                  <el-button size="small" type="primary" link @click="downloadLocalArtifact(row)">
+                    <el-icon><Download /></el-icon>
+                    {{ $t('uiAutomation.execution.download') }}
+                  </el-button>
+                </template>
+              </el-table-column>
+            </el-table>
           </el-tab-pane>
 
           <!-- 失败截图 - 仅失败或错误状态显示 -->
@@ -232,10 +263,16 @@
     <!-- 重跑测试用例对话框 -->
     <el-dialog v-model="showRerunDialogVisible" :title="$t('uiAutomation.execution.rerunTitle')" width="500px">
       <el-form :model="rerunFormData" label-width="100px">
+        <el-form-item :label="$t('uiAutomation.execution.runLocation')">
+          <el-radio-group v-model="rerunFormData.runLocation" @change="handleRerunLocationChange">
+            <el-radio label="server">{{ $t('uiAutomation.execution.serverRun') }}</el-radio>
+            <el-radio label="local">{{ $t('uiAutomation.execution.localRun') }}</el-radio>
+          </el-radio-group>
+        </el-form-item>
         <el-form-item :label="$t('uiAutomation.execution.testEngine')">
           <el-radio-group v-model="rerunFormData.engine">
             <el-radio label="playwright">Playwright</el-radio>
-            <el-radio label="selenium">Selenium</el-radio>
+            <el-radio label="selenium" :disabled="rerunFormData.runLocation === 'local'">Selenium</el-radio>
           </el-radio-group>
         </el-form-item>
         <el-form-item :label="$t('uiAutomation.execution.browserFilter')">
@@ -264,14 +301,17 @@
 <script setup>
 import { ref, reactive, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, View, WarningFilled, Refresh } from '@element-plus/icons-vue'
+import { Search, View, WarningFilled, Refresh, Download } from '@element-plus/icons-vue'
 import { useI18n } from 'vue-i18n'
 import {
   getTestCaseExecutions,
+  getTestCaseExecution,
   getUiProjects,
   deleteTestCaseExecution,
   batchDeleteTestCaseExecutions,
-  runTestCase
+  runTestCase,
+  runTestCaseLocally,
+  downloadLocalExecutionArtifact
 } from '@/api/ui_automation'
 
 const { t } = useI18n()
@@ -301,11 +341,28 @@ const showDetailDialog = ref(false)
 const activeTab = ref('logs')
 const currentExecution = ref(null)
 
+const downloadLocalArtifact = async (artifact) => {
+  try {
+    const response = await downloadLocalExecutionArtifact(artifact.id)
+    const url = URL.createObjectURL(response.data)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = artifact.name
+    link.click()
+    URL.revokeObjectURL(url)
+  } catch (error) {
+    console.error('下载本机执行附件失败:', error)
+    ElMessage.error(t('uiAutomation.execution.downloadFailed'))
+  }
+}
+
 // 重跑对话框相关
 const showRerunDialogVisible = ref(false)
 const rerunning = ref(false)
 const rerunFormData = reactive({
   testCaseId: null,
+  retryExecutionId: null,
+  runLocation: 'server',
   engine: 'playwright',
   browser: 'chrome',
   headless: false
@@ -413,6 +470,7 @@ const getActionText = (actionType) => {
     'fill': t('uiAutomation.actionTypes.fill'),
     'getText': t('uiAutomation.actionTypes.getText'),
     'waitFor': t('uiAutomation.actionTypes.waitFor'),
+    'waitForEnabled': t('uiAutomation.actionTypes.waitForEnabled'),
     'hover': t('uiAutomation.actionTypes.hover'),
     'scroll': t('uiAutomation.actionTypes.scroll'),
     'screenshot': t('uiAutomation.actionTypes.screenshot'),
@@ -555,17 +613,30 @@ const handleBatchDelete = () => {
 // 查看执行详情
 const viewExecutionDetail = (execution) => {
   currentExecution.value = execution
-  activeTab.value = 'logs'
+  activeTab.value = execution.data_results?.length ? 'data' : 'logs'
   showDetailDialog.value = true
+}
+
+const openDataExecution = async id => {
+  try {
+    const { data } = await getTestCaseExecution(id)
+    viewExecutionDetail(data)
+  } catch { ElMessage.error('加载数据行详情失败') }
 }
 
 // 显示重跑对话框
 const showRerunDialog = (execution) => {
   rerunFormData.testCaseId = execution.test_case
+  rerunFormData.retryExecutionId = execution.data_index != null ? execution.id : null
+  rerunFormData.runLocation = 'server'
   rerunFormData.engine = execution.engine || 'playwright'
   rerunFormData.browser = execution.browser || 'chrome'
   rerunFormData.headless = execution.headless || false
   showRerunDialogVisible.value = true
+}
+
+const handleRerunLocationChange = (location) => {
+  if (location === 'local') rerunFormData.engine = 'playwright'
 }
 
 // 执行重跑
@@ -577,29 +648,50 @@ const handleRerun = async () => {
 
   rerunning.value = true
   try {
-    const response = await runTestCase(rerunFormData.testCaseId, {
-      engine: rerunFormData.engine,
-      browser: rerunFormData.browser,
-      headless: rerunFormData.headless
-    })
+    const retryData = rerunFormData.retryExecutionId
+      ? { retry_execution_id: rerunFormData.retryExecutionId }
+      : {}
+    const isLocal = rerunFormData.runLocation === 'local'
+    const response = isLocal
+      ? await runTestCaseLocally(rerunFormData.testCaseId, {
+          browser: rerunFormData.browser,
+          headless: rerunFormData.headless,
+          runner_origin: window.location.origin,
+          ...retryData
+        })
+      : await runTestCase(rerunFormData.testCaseId, {
+          engine: rerunFormData.engine,
+          browser: rerunFormData.browser,
+          headless: rerunFormData.headless,
+          ...retryData
+        })
 
     // 无论成功失败，都关闭弹框并刷新列表
     showRerunDialogVisible.value = false
+
+    if (isLocal) {
+      window.location.href = response.data.protocol_url
+      ElMessage.success(t('uiAutomation.execution.messages.localLaunchRequested'))
+    }
 
     // 延迟一下再刷新，确保后端已经保存完成
     setTimeout(async () => {
       await loadExecutions()
     }, 500)
 
-    // 根据返回结果显示消息
-    if (response.data.success) {
-      ElMessage.success(t('uiAutomation.execution.messages.rerunSuccess'))
-    } else {
-      ElMessage.warning(t('uiAutomation.execution.messages.rerunCompleteWithFailure') + ': ' + (response.data.errors?.[0]?.message || t('uiAutomation.execution.messages.viewDetails')))
+    // 本机执行器异步回传结果；服务端执行则直接根据响应反馈结果。
+    if (!isLocal) {
+      if (response.data.pending) {
+        ElMessage.success('数据行重跑已启动，可在执行记录中查看进度')
+      } else if (response.data.success) {
+        ElMessage.success(t('uiAutomation.execution.messages.rerunSuccess'))
+      } else {
+        ElMessage.warning(t('uiAutomation.execution.messages.rerunCompleteWithFailure') + ': ' + (response.data.errors?.[0]?.message || t('uiAutomation.execution.messages.viewDetails')))
+      }
     }
   } catch (error) {
     showRerunDialogVisible.value = false
-    ElMessage.error(t('uiAutomation.execution.messages.rerunFailed') + ': ' + (error.response?.data?.message || error.message || t('uiAutomation.messages.error.unknown')))
+    ElMessage.error(t('uiAutomation.execution.messages.rerunFailed') + ': ' + (error.response?.data?.detail || error.response?.data?.message || error.message || t('uiAutomation.messages.error.unknown')))
     console.error('重跑失败:', error)
     // 即使失败也刷新列表，因为可能已经创建了执行记录
     setTimeout(async () => {

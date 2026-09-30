@@ -13,7 +13,9 @@ from .views import (
     TestSuiteViewSet,
     TestExecutionViewSet,
     ScreenshotViewSet,
+    TestCaseGroupViewSet,
     TestCaseViewSet,
+    TestFileAssetViewSet,
     TestCaseStepViewSet,
     TestCaseExecutionViewSet,
     UiScheduledTaskViewSet,
@@ -24,6 +26,17 @@ from .views import (
     UiDashboardViewSet
 )
 from .views_config import EnvironmentConfigViewSet, AIIntelligentModeConfigViewSet
+from .local_runner_views import (
+    LocalExecutionArtifactView,
+    LocalExecutionArtifactDownloadView,
+    LocalExecutionClaimView,
+    LocalExecutionCompleteView,
+    LocalExecutionCreateView,
+    LocalExecutionEventView,
+    LocalExecutionFileView,
+)
+
+from .local_suite_runner import LocalSuiteExecutionCreateView, LocalSuiteExecutionStatusView
 
 router = DefaultRouter()
 router.register(r'dashboard', UiDashboardViewSet, basename='dashboard')
@@ -37,7 +50,9 @@ router.register(r'steps', ScriptStepViewSet)
 router.register(r'test-suites', TestSuiteViewSet)
 router.register(r'test-executions', TestExecutionViewSet)
 router.register(r'screenshots', ScreenshotViewSet)
+router.register(r'test-case-groups', TestCaseGroupViewSet, basename='test-case-groups')
 router.register(r'test-cases', TestCaseViewSet)
+router.register(r'test-file-assets', TestFileAssetViewSet, basename='test-file-assets')
 router.register(r'test-case-steps', TestCaseStepViewSet)
 router.register(r'test-case-executions', TestCaseExecutionViewSet)
 router.register(r'scheduled-tasks', UiScheduledTaskViewSet)
@@ -54,6 +69,15 @@ router.register(r'config/ai-mode', AIIntelligentModeConfigViewSet, basename='con
 router.register(r'ai-models', AIIntelligentModeConfigViewSet, basename='ai-models')
 
 urlpatterns = [
+    path('test-suites/<int:test_suite_id>/run-local/', LocalSuiteExecutionCreateView.as_view(), name='local-suite-execution-create'),
+    path('test-executions/<int:execution_id>/local-status/', LocalSuiteExecutionStatusView.as_view(), name='local-suite-execution-status'),
+    path('test-cases/<int:test_case_id>/run-local/', LocalExecutionCreateView.as_view(), name='local-execution-create'),
+    path('local-runner/jobs/claim/', LocalExecutionClaimView.as_view(), name='local-execution-claim'),
+    path('local-runner/jobs/<uuid:job_id>/events/', LocalExecutionEventView.as_view(), name='local-execution-events'),
+    path('local-runner/jobs/<uuid:job_id>/artifacts/', LocalExecutionArtifactView.as_view(), name='local-execution-artifacts'),
+    path('local-runner/jobs/<uuid:job_id>/complete/', LocalExecutionCompleteView.as_view(), name='local-execution-complete'),
+    path('local-runner/jobs/<uuid:job_id>/files/<int:asset_id>/', LocalExecutionFileView.as_view(), name='local-execution-file'),
+    path('local-runner/artifacts/<int:artifact_id>/download/', LocalExecutionArtifactDownloadView.as_view(), name='local-execution-artifact-download'),
     path('', include(router.urls)),
 ]
 

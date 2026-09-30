@@ -138,6 +138,8 @@
               <el-input
                 v-model="form.username"
                 :placeholder="$t('auth.usernamePlaceholder')"
+                :aria-label="$t('auth.usernamePlaceholder')"
+                autocomplete="username"
                 size="large"
                 :prefix-icon="User"
               />
@@ -148,6 +150,8 @@
                 v-model="form.password"
                 type="password"
                 :placeholder="$t('auth.passwordPlaceholder')"
+                :aria-label="$t('auth.passwordPlaceholder')"
+                autocomplete="current-password"
                 size="large"
                 :prefix-icon="Lock"
                 show-password
@@ -448,10 +452,11 @@ onUnmounted(() => {
 
 <style lang="scss" scoped>
 .login-container {
-  height: 100vh;
+  min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   background: #f4f6fb;
-  overflow: hidden;
+  overflow-x: clip;
 }
 
 .dropdown-flag {
@@ -909,25 +914,26 @@ onUnmounted(() => {
   }
 
   .showcase-section {
-    min-height: 50vh;
-    padding: 30px;
+    flex: none;
+    min-height: 0;
+    padding: 64px 24px 24px;
 
     .brand-header {
-      margin-bottom: 30px;
+      margin-bottom: 0;
 
       .logo-wrapper .brand-title {
         font-size: 32px;
       }
     }
 
-    .features-grid {
+    .features-grid, .ai-capabilities {
       display: none;
     }
   }
 
   .login-section {
     width: 100%;
-    padding: 30px;
+    padding: 28px 24px;
   }
 }
 </style>

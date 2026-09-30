@@ -220,8 +220,17 @@
     <!-- 运行配置对话框 -->
     <el-dialog v-model="showRunDialog" :title="$t('uiAutomation.suite.runConfig')" width="600px" :close-on-click-modal="false">
       <el-form :model="runConfig" label-width="120px">
+        <el-form-item :label="$t('uiAutomation.suite.runLocation')">
+          <el-radio-group v-model="runConfig.location" :disabled="running" @change="onRunLocationChange">
+            <el-radio label="server">{{ $t('uiAutomation.suite.serverRun') }}</el-radio>
+            <el-radio label="local">{{ $t('uiAutomation.suite.localRun') }}</el-radio>
+          </el-radio-group>
+          <div v-if="runConfig.location === 'local'" class="mode-description">
+            <span class="description-text">{{ $t('uiAutomation.suite.localRunHint') }}</span>
+          </div>
+        </el-form-item>
         <el-form-item :label="$t('uiAutomation.suite.testEngine')">
-          <el-select v-model="runConfig.engine" :placeholder="$t('uiAutomation.suite.testEngine')">
+          <el-select v-model="runConfig.engine" :disabled="runConfig.location === 'local' || running" :placeholder="$t('uiAutomation.suite.testEngine')">
             <el-option label="Playwright" value="playwright" />
             <el-option label="Selenium" value="selenium" />
           </el-select>
@@ -235,10 +244,11 @@
           </el-select>
         </el-form-item>
         <el-form-item :label="$t('uiAutomation.suite.executionMode')">
-          <el-radio-group v-model="runConfig.headless">
+          <el-radio-group v-if="runConfig.location === 'local'" v-model="runConfig.headless">
             <el-radio :label="false">{{ $t('uiAutomation.suite.headedMode') }}</el-radio>
             <el-radio :label="true">{{ $t('uiAutomation.suite.headlessMode') }}</el-radio>
           </el-radio-group>
+          <el-tag v-else type="info">{{ $t('uiAutomation.suite.headlessMode') }}</el-tag>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -249,7 +259,7 @@
             @click="confirmRunSuite"
             :loading="running"
           >
-            {{ $t('uiAutomation.suite.startExecution') }}
+            {{ $t(runConfig.location === 'local' ? 'uiAutomation.suite.localRun' : 'uiAutomation.suite.startExecution') }}
           </el-button>
         </span>
       </template>
@@ -258,7 +268,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   Plus, Search, Edit, Delete, RefreshRight, Collection,
@@ -275,7 +285,9 @@ import {
   addTestCaseToTestSuite,
   removeTestCaseFromTestSuite,
   updateTestCaseOrder,
-  runTestSuite
+  runTestSuite,
+  runTestSuiteLocally,
+  getLocalSuiteExecutionStatus
 } from '@/api/ui_automation'
 import { useI18n } from 'vue-i18n'
 
@@ -319,6 +331,7 @@ const testCaseSearchText = ref('')
 
 // 运行配置
 const runConfig = reactive({
+  location: 'server',
   engine: 'playwright',
   browser: 'chrome',
   headless: false
@@ -539,17 +552,35 @@ const runSuite = (suite) => {
 }
 
 // 确认运行套件
+const onRunLocationChange = () => {
+  if (runConfig.location === 'local') runConfig.engine = 'playwright'
+}
+
 const confirmRunSuite = async () => {
+  if (running.value) return
   running.value = true
+  const suiteId = currentRunningSuite.value.id
   try {
     const requestData = {
       use_ai: false,
       engine: runConfig.engine,
       browser: runConfig.browser,
-      headless: runConfig.headless
+      headless: runConfig.location === 'local' ? runConfig.headless : true
     }
 
-    const response = await runTestSuite(currentRunningSuite.value.id, requestData)
+    if (runConfig.location === 'local') {
+      const { data } = await runTestSuiteLocally(suiteId, {
+        ...requestData, engine: 'playwright', runner_origin: window.location.origin
+      })
+      showRunDialog.value = false
+      window.location.href = data.protocol_url
+      ElMessage.success(t('uiAutomation.suite.messages.localLaunchRequested'))
+      pollLocalSuiteStatus(data.suite_execution_id)
+      await loadSuites()
+      return
+    }
+
+    await runTestSuite(suiteId, requestData)
 
     ElMessage.success(t('uiAutomation.suite.messages.startSuccess'))
     showRunDialog.value = false
@@ -558,15 +589,58 @@ const confirmRunSuite = async () => {
     await loadSuites()
 
     // 开始轮询检查执行状态
-    pollSuiteStatus(currentRunningSuite.value.id)
+    pollSuiteStatus(suiteId)
   } catch (error) {
     console.error('执行测试套件失败:', error)
     // 如果后端返回了错误消息，显示具体错误
-    const errorMsg = error.response?.data?.error || t('uiAutomation.suite.messages.executeFailed')
+    const data = error.response?.data
+    const errorMsg = data?.detail || data?.error || (data && Object.values(data).flat().join('；')) || t('uiAutomation.suite.messages.executeFailed')
     ElMessage.error(errorMsg)
   } finally {
     running.value = false
   }
+}
+
+const localPollers = new Map()
+let unmounted = false
+onUnmounted(() => {
+  unmounted = true
+  for (const timer of localPollers.values()) clearTimeout(timer)
+  localPollers.clear()
+})
+
+const pollLocalSuiteStatus = (executionId) => {
+  let failures = 0
+  const started = Date.now()
+  const poll = async () => {
+    if (unmounted) return
+    try {
+      const { data } = await getLocalSuiteExecutionStatus(executionId)
+      if (unmounted) return
+      failures = 0
+      await loadSuites()
+      if (!['PENDING', 'RUNNING'].includes(data.status)) {
+        localPollers.delete(executionId)
+        if (data.runner_status === 'expired') {
+          ElMessage.warning(data.error_message)
+        } else if (data.status === 'SUCCESS') {
+          ElMessage.success(`${t('uiAutomation.suite.messages.executionComplete')}: ${t('uiAutomation.suite.messages.allPassed')} (${data.passed_cases}/${data.total_cases})`)
+        } else {
+          ElMessage.warning(`${t('uiAutomation.suite.messages.executionComplete')}: ${t('uiAutomation.suite.messages.partialFailed')} (${data.passed_cases}/${data.total_cases})`)
+        }
+        return
+      }
+    } catch {
+      failures += 1
+    }
+    if (failures >= 10 || Date.now() - started > 6 * 60 * 60 * 1000) {
+      localPollers.delete(executionId)
+      ElMessage.info(t('uiAutomation.suite.messages.longExecution'))
+      return
+    }
+    if (!unmounted) localPollers.set(executionId, setTimeout(poll, 3000))
+  }
+  poll()
 }
 
 // 轮询检查套件执行状态

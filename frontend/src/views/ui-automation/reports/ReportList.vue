@@ -413,6 +413,7 @@ const getActionText = (actionType) => {
     'fill': t('uiAutomation.actionTypes.fill'),
     'getText': t('uiAutomation.actionTypes.getText'),
     'waitFor': t('uiAutomation.actionTypes.waitFor'),
+    'waitForEnabled': t('uiAutomation.actionTypes.waitForEnabled'),
     'hover': t('uiAutomation.actionTypes.hover'),
     'scroll': t('uiAutomation.actionTypes.scroll'),
     'screenshot': t('uiAutomation.actionTypes.screenshot'),
